@@ -1,0 +1,61 @@
+name: Daily POS Sales Report
+
+on:
+  schedule:
+    # 6:00 AM UAE (UTC+4) = 2:00 AM UTC  — runs every day
+    - cron: "0 2 * * *"
+  workflow_dispatch:   # allows manual trigger from GitHub Actions UI
+
+jobs:
+  run-pipeline:
+    name: Download, Transform & Email Report
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: |
+          pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: |
+          playwright install chromium --with-deps
+
+      - name: Run pipeline
+        working-directory: .
+        env:
+          PORTAL_USERNAME:    ${{ secrets.PORTAL_USERNAME }}
+          PORTAL_COMPANY:     ${{ secrets.PORTAL_COMPANY }}
+          PORTAL_PASSWORD:    ${{ secrets.PORTAL_PASSWORD }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: python automation.py
+
+      - name: Upload output as artifact (backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: pos-report-${{ github.run_id }}
+          path: |
+            output/*.xlsx
+            logs/*.jsonl
+          retention-days: 30
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots-${{ github.run_id }}
+          path: screenshots/
+          retention-days: 7

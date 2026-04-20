@@ -1,0 +1,133 @@
+# ============================================================
+# Oracle BI Automation — Single Source of Truth Configuration
+# ============================================================
+# Edit this file to update selectors, menu chain, or column
+# mapping WITHOUT touching any Python code.
+
+portal:
+  login_url: "https://reports.indpt.com/login.jsp"
+  portal_url: "https://reports.indpt.com/mainPortal.jsp"
+  # Direct URL to the report page — bypasses portal navigation entirely.
+  report_url: "https://reports.indpt.com/finengine/reportAction.do?method=run&reportID=1148"
+  # Element on mainPortal.jsp that only exists when authenticated.
+  # Left empty → session cache is used but not validated (always re-logins if cache missing).
+  authenticated_element: ""
+
+# -------------------------------------------------------
+# LOGIN FIELD SELECTORS
+# Run debug_selectors.py once and fill these in.
+# Values can be CSS selectors, e.g. "#username" or
+# "input[name='company']" or "[placeholder='Company']"
+# -------------------------------------------------------
+selectors:
+  username_field: "#usr"
+  company_field: "#cpny"
+  password_field: "#pwd"
+  login_button: "#Login"
+  login_error: ""          # element that appears on bad credentials (for AuthError detection)
+
+# -------------------------------------------------------
+# NAVIGATION CHAIN
+# The pipeline navigates directly to report_url above,
+# then waits for the report to render before clicking
+# the Excel export icon.
+#
+# "click"  = selector to click (on the report page)
+# "wait"   = selector to wait for AFTER the click
+# -------------------------------------------------------
+navigation:
+  - step: "Excel Export"
+    click: "img[title='Excel (.xlsx)']"
+    wait: null              # download fires — no next element to wait for
+
+# -------------------------------------------------------
+# COLUMN MAPPING
+# raw_column   : exact header string from the downloaded file
+# target_column: output header for the final .xlsx
+# dtype        : "str" | "int" | "float" | "date"
+# drop         : true → column exists in raw but is excluded from output
+# inject       : true → column does NOT exist in raw; value derived/empty
+# -------------------------------------------------------
+columns:
+  - raw: "Menu Item Name"
+    target: "POS Item Name"
+    dtype: str
+
+  - raw: "Menu Item #"
+    target: "POS Item ID *"
+    dtype: int
+
+  - raw: "Qty Sold"
+    target: "Sold QTY *"
+    dtype: int
+
+  - raw: "Discounts"
+    target: "Total Discount Value"
+    dtype: float
+
+  - raw: "Net VAT after Disc."
+    target: "Total sales excl. tax *"
+    dtype: float
+
+  - raw: "Gross after Disc."
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  # Injected columns (not present in raw file)
+  - raw: null
+    target: "Sales Date *"
+    dtype: date
+    inject: business_dates_metadata   # extracted from metadata row
+
+  - raw: null
+    target: "Order ID"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sales Type Code"
+    dtype: str
+    inject: empty
+
+  # Columns to drop (present in raw, excluded from output)
+  - raw: "Menu Item Def"
+    target: null
+    drop: true
+
+  - raw: "Price Level"
+    target: null
+    drop: true
+
+  - raw: "Returns"
+    target: null
+    drop: true
+
+  - raw: "Net VAT before Disc."
+    target: null
+    drop: true
+
+  - raw: "Discounts VAT"
+    target: null
+    drop: true
+
+  - raw: "Gross before Disc."
+    target: null
+    drop: true
+
+# Final output column order (must list every non-dropped target column)
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+
+# Date format for the "Business Dates" metadata value in the raw file
+# e.g. "15/04/2026"
+raw_date_format: "%d/%m/%Y"
+# Format to write in the output file — e.g. "15-Apr-2026"
+output_date_format: "%d-%b-%Y"

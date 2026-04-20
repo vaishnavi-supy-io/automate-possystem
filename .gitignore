@@ -1,0 +1,11 @@
+.env
+state/storage_state.json
+state/checkpoint.json
+downloads/
+output/
+logs/
+screenshots/
+__pycache__/
+*.pyc
+*.pyo
+.venv/
