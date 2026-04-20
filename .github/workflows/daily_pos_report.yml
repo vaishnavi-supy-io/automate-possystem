@@ -10,7 +10,7 @@ jobs:
   run-pipeline:
     name: Download, Transform & Email Report
     runs-on: ubuntu-22.04
-    timeout-minutes: 15
+    timeout-minutes: 120
 
     steps:
       - name: Checkout repository
@@ -40,7 +40,7 @@ jobs:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
-        run: python automation.py
+        run: python automation.py --all-locations --all-locations
 
       - name: Upload output as artifact (backup)
         if: always()
