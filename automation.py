@@ -338,188 +338,126 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
 def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
     """
     Set the Revenue Centers filter on the Oracle BI report to the given
-    ``pos_location_name`` and wait for the report to reload.
+    ``pos_location_name`` and wait for the report to be ready.
 
-    The exact selectors for this portal are UNKNOWN at implementation time.
-    Run ``python debug_location_filter.py`` to inspect the live page and
-    discover the real selectors, then update this function accordingly.
-
-    TODO: Run debug_location_filter.py against the live portal and replace the
-          selector constants below with the actual values found in that output.
-
-    Strategy attempted (in order):
-      1. Look for a <select> or listbox in the main frame and all iframes
-         whose id/name/label contains "Revenue", "Location", or "Center".
-      2. Clear the current selection, find the option matching pos_location_name,
-         select it, then click Apply / Run / Submit.
-      3. If no matching <select> is found, attempt the URL-parameter approach by
-         reloading the report URL with a guessed query parameter.
-      4. Wait for the report data area to reload (networkidle + download button).
+    Confirmed portal structure (from debug_location_filter.py):
+      - iframe name='revenueCenterFrame' contains a jsTree dual-listbox UI
+      - Search input: #serachmaintree (portal typo intentional)
+      - Search button: input[value='Search'] (first in frame)
+      - Add button: input[value='Add']
+      - Apply button: input#btnApplySelection
+      - Tree results div: #loadlocationtreetd
+      - Main frame also has select#revenueCenterData (117 options, used as fallback)
 
     Raises NavError if the filter cannot be applied.
     """
     t0 = time.monotonic()
     report_url = CONFIG["portal"]["report_url"]
 
-    # ── TODO: replace these with real selectors from debug_location_filter.py ──
-    # Common Oracle BI Revenue Centers filter selectors (best-effort guesses):
-    _REVENUE_SELECT_CANDIDATES = [
-        # Oracle BI Answers / OBIEE style
-        "select[name*='Revenue']",
-        "select[name*='revenue']",
-        "select[name*='Location']",
-        "select[name*='location']",
-        "select[id*='Revenue']",
-        "select[id*='revenue']",
-        "select[id*='Location']",
-        "select[id*='location']",
-        "select[id*='Center']",
-        "select[id*='center']",
-        # Oracle BI Publisher style
-        "select[name*='REVENUE']",
-        "select[name*='CENTER']",
-        # Generic multi-select listbox
-        "select[multiple]",
-        # ARIA roles
-        "[role='listbox']",
-    ]
-    _APPLY_BUTTON_CANDIDATES = [
-        "input[type='submit'][value*='Apply']",
-        "input[type='submit'][value*='Run']",
-        "button:has-text('Apply')",
-        "button:has-text('Run')",
-        "button:has-text('OK')",
-        "input[type='button'][value*='Apply']",
-        "input[value='Apply']",
-        "input[value='Run']",
-        "#btnApply",
-        "#applyButton",
-        "input[name*='apply']",
-        "input[name*='Apply']",
-    ]
-    # ── end TODO block ─────────────────────────────────────────────────────────
-
     if _verbose:
         print(f"  [→] Setting Revenue Centers filter to: {pos_location_name!r}")
 
-    # Navigate fresh to the report URL each time so filter state is clean
+    # Navigate fresh each time so filter state is clean
     page.goto(report_url, wait_until="domcontentloaded", timeout=30_000)
     try:
         page.wait_for_load_state("networkidle", timeout=30_000)
     except Exception:
-        pass  # networkidle can time out on slow portals; proceed anyway
-
-    # Collect all frames: main frame + iframes
-    frames_to_try = [page.main_frame] + [f for f in page.frames if f != page.main_frame]
+        pass
 
     filter_applied = False
 
-    for frame in frames_to_try:
-        if filter_applied:
-            break
-        for selector in _REVENUE_SELECT_CANDIDATES:
-            try:
-                el = frame.query_selector(selector)
-                if el is None:
-                    continue
+    # ── Primary: revenueCenterFrame jsTree search UI ──────────────────────────
+    try:
+        rc_frame = page.frame(name="revenueCenterFrame")
+        if rc_frame is None:
+            raise RuntimeError("revenueCenterFrame not found")
 
-                # Found a candidate filter element — try to select the location
-                tag = el.evaluate("el => el.tagName.toLowerCase()")
+        # Wait for the search input to be ready
+        rc_frame.wait_for_selector("#serachmaintree", state="visible", timeout=15_000)
 
-                if tag == "select":
-                    # Get all <option> texts to find a match
-                    options = el.query_selector_all("option")
-                    matched_value = None
-                    for opt in options:
-                        opt_text = opt.inner_text().strip()
-                        opt_val = opt.get_attribute("value") or ""
-                        if (opt_text.lower() == pos_location_name.lower() or
-                                opt_val.lower() == pos_location_name.lower()):
-                            matched_value = opt_val or opt_text
-                            break
-
-                    if matched_value is None:
-                        if _verbose:
-                            print(f"  [!] Select found ({selector}) but no option matched "
-                                  f"{pos_location_name!r} — skipping")
-                        continue
-
-                    # Deselect all, then select the matching option
-                    frame.evaluate(
-                        """([sel, val]) => {
-                            for (const opt of sel.options) { opt.selected = false; }
-                            for (const opt of sel.options) {
-                                if (opt.value === val || opt.text === val) {
-                                    opt.selected = true;
-                                    break;
-                                }
-                            }
-                            sel.dispatchEvent(new Event('change', {bubbles: true}));
-                        }""",
-                        [el, matched_value]
-                    )
-                    if _verbose:
-                        print(f"  [✓] Selected {pos_location_name!r} in <select> ({selector})")
-                    filter_applied = True
-
-                elif el.get_attribute("role") in ("listbox", "option"):
-                    # ARIA listbox — click the matching item
-                    items = frame.query_selector_all("[role='option']")
-                    for item in items:
-                        if item.inner_text().strip().lower() == pos_location_name.lower():
-                            item.click()
-                            filter_applied = True
-                            if _verbose:
-                                print(f"  [✓] Clicked ARIA option {pos_location_name!r}")
-                            break
-
-                if filter_applied:
-                    # Click Apply/Run button
-                    for apply_sel in _APPLY_BUTTON_CANDIDATES:
-                        try:
-                            apply_btn = frame.query_selector(apply_sel)
-                            if apply_btn:
-                                apply_btn.click()
-                                if _verbose:
-                                    print(f"  [✓] Clicked apply button ({apply_sel})")
-                                break
-                        except Exception:
-                            pass
-                    break
-
-            except Exception as e:
-                if _verbose:
-                    print(f"  [!] Filter attempt with {selector!r} failed: {e}")
-                continue
-
-    if not filter_applied:
-        # ── Fallback: URL parameter approach ────────────────────────────────
-        # Some Oracle BI portals accept filter values as URL query parameters.
-        # TODO: Inspect the network requests in debug_location_filter.py to find
-        #       the real parameter name (e.g., &p_REVENUE_CENTER=, &RC=, etc.)
-        import urllib.parse
-        param_name_candidates = [
-            "RevenueCenter", "revenue_center", "REVENUE_CENTER",
-            "Location", "location", "RC", "loc",
-        ]
-        # Use the first candidate as the best guess
-        param_name = param_name_candidates[0]
-        encoded_loc = urllib.parse.quote(pos_location_name)
-        url_with_filter = f"{report_url}&{param_name}={encoded_loc}"
-
-        if _verbose:
-            print(f"  [!] No filter widget found — trying URL parameter fallback:")
-            print(f"      {url_with_filter}")
-
-        page.goto(url_with_filter, wait_until="domcontentloaded", timeout=30_000)
+        # Clear any existing selection in the target tree
         try:
-            page.wait_for_load_state("networkidle", timeout=30_000)
+            clear_link = rc_frame.query_selector("a:text('Clear selection')")
+            if clear_link:
+                clear_link.click()
+                time.sleep(0.5)
         except Exception:
             pass
-        # We optimistically continue; if the filter didn't apply, the downloaded
-        # report will contain all locations (same as legacy behaviour for this loc).
 
-    # Wait for report data to be ready (Excel button must be present)
+        # Type location name into search box and click Search
+        search_input = rc_frame.locator("#serachmaintree")
+        search_input.fill("")
+        search_input.fill(pos_location_name)
+
+        search_btn = rc_frame.locator("input[value='Search']").first
+        search_btn.click()
+        time.sleep(1.5)  # give jsTree time to filter
+
+        # Click the matching node in the source tree
+        # jsTree renders nodes as <a> elements inside #loadlocationtreetd
+        tree_div = rc_frame.locator("#loadlocationtreetd")
+        node = tree_div.get_by_text(pos_location_name, exact=True).first
+        node.click(timeout=10_000)
+        time.sleep(0.5)
+
+        # Click Add to move to selected side
+        rc_frame.locator("input[value='Add']").click()
+        time.sleep(0.5)
+
+        # Apply selection
+        rc_frame.locator("input#btnApplySelection").click()
+        time.sleep(1.0)
+
+        filter_applied = True
+        if _verbose:
+            print(f"  [✓] Revenue Centers filter applied via revenueCenterFrame jsTree")
+
+    except Exception as e:
+        if _verbose:
+            print(f"  [!] revenueCenterFrame approach failed: {e}")
+
+    # ── Fallback: select#revenueCenterData in main frame ─────────────────────
+    if not filter_applied:
+        try:
+            # select#revenueCenterData has 117 options matching POS names
+            options = page.locator("#revenueCenterData option")
+            count = options.count()
+            matched = None
+            for i in range(count):
+                opt = options.nth(i)
+                text = opt.inner_text().strip()
+                if text.lower() == pos_location_name.lower():
+                    matched = text
+                    break
+
+            if matched:
+                page.evaluate(
+                    """([val]) => {
+                        const sel = document.querySelector('#revenueCenterData');
+                        for (const opt of sel.options) { opt.selected = false; }
+                        for (const opt of sel.options) {
+                            if (opt.text === val) { opt.selected = true; break; }
+                        }
+                        sel.dispatchEvent(new Event('change', {bubbles: true}));
+                    }""",
+                    [matched]
+                )
+                filter_applied = True
+                if _verbose:
+                    print(f"  [✓] Revenue Centers filter applied via select#revenueCenterData")
+            else:
+                if _verbose:
+                    print(f"  [!] select#revenueCenterData: no option matched {pos_location_name!r}")
+        except Exception as e:
+            if _verbose:
+                print(f"  [!] select#revenueCenterData fallback failed: {e}")
+
+    if not filter_applied:
+        if _verbose:
+            print(f"  [!] Could not apply filter for {pos_location_name!r} — "
+                  f"report will contain all locations for this entry")
+
+    # Wait for report data to be ready (Excel download button must be visible)
     try:
         final_step = CONFIG["navigation"][-1]
         page.wait_for_selector(final_step["click"], state="visible", timeout=60_000)
