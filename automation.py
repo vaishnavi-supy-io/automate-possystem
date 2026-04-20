@@ -474,14 +474,24 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
             print(f"  [!] Could not apply filter for {pos_location_name!r} — "
                   f"report will contain all locations for this entry")
 
-    # Wait for report data to be ready (Excel download button must be visible)
+    # Click "Run Report" to execute the report with the selected filter.
+    # The Excel download button only appears AFTER the report has finished running.
+    try:
+        page.locator('[id="Run Report"]').click(timeout=15_000)
+        if _verbose:
+            print(f"  [→] Clicked 'Run Report'")
+    except Exception as e:
+        if _verbose:
+            print(f"  [!] Could not click Run Report: {e}")
+
+    # Wait for the Excel download button to appear (report finished rendering)
     try:
         final_step = CONFIG["navigation"][-1]
-        page.wait_for_selector(final_step["click"], state="visible", timeout=60_000)
+        page.wait_for_selector(final_step["click"], state="visible", timeout=120_000)
     except Exception as exc:
         screenshot(page, "nav", f"filter_error_{_sanitize_filename(pos_location_name)}")
         raise NavError(
-            f"Report did not reload after setting filter to {pos_location_name!r}: {exc}"
+            f"Report did not finish rendering after filter for {pos_location_name!r}: {exc}"
         ) from exc
 
     log("nav", "set_location_filter", "ok",
