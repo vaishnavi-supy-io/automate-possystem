@@ -372,13 +372,21 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
         if rc_frame is None:
             raise RuntimeError("revenueCenterFrame not found")
 
-        # Wait for the search input to be ready
+        # The iframe panels are collapsed by default — click the header button
+        # in the main frame to expand the Revenue Centers section first.
+        try:
+            page.locator("#revenueCenterBtn").click(timeout=5_000)
+            time.sleep(1.0)
+        except Exception:
+            pass
+
+        # Wait for the search input to become interactive
         rc_frame.wait_for_selector("#serachmaintree", state="visible", timeout=15_000)
 
         # Clear any existing selection in the target tree
         try:
-            clear_link = rc_frame.query_selector("a:text('Clear selection')")
-            if clear_link:
+            clear_link = rc_frame.locator("a", has_text="Clear selection").first
+            if clear_link.count():
                 clear_link.click()
                 time.sleep(0.5)
         except Exception:
@@ -389,9 +397,8 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
         search_input.fill("")
         search_input.fill(pos_location_name)
 
-        search_btn = rc_frame.locator("input[value='Search']").first
-        search_btn.click()
-        time.sleep(1.5)  # give jsTree time to filter
+        rc_frame.locator("input[value='Search']").first.click(force=True)
+        time.sleep(2.0)  # give jsTree time to filter results
 
         # Click the matching node in the source tree
         # jsTree renders nodes as <a> elements inside #loadlocationtreetd
@@ -401,12 +408,12 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
         time.sleep(0.5)
 
         # Click Add to move to selected side
-        rc_frame.locator("input[value='Add']").click()
+        rc_frame.locator("input[value='Add']").click(force=True)
         time.sleep(0.5)
 
         # Apply selection
-        rc_frame.locator("input#btnApplySelection").click()
-        time.sleep(1.0)
+        rc_frame.locator("input#btnApplySelection").click(force=True)
+        time.sleep(1.5)
 
         filter_applied = True
         if _verbose:
@@ -419,16 +426,25 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
     # ── Fallback: select#revenueCenterData in main frame ─────────────────────
     if not filter_applied:
         try:
-            # select#revenueCenterData has 117 options matching POS names
-            options = page.locator("#revenueCenterData option")
-            count = options.count()
+            # select#revenueCenterData has 117 options; do fuzzy match on portal names
+            options_els = page.locator("#revenueCenterData option").all()
             matched = None
-            for i in range(count):
-                opt = options.nth(i)
+            pos_lower = pos_location_name.lower()
+            for opt in options_els:
                 text = opt.inner_text().strip()
-                if text.lower() == pos_location_name.lower():
+                if text.lower() == pos_lower:
                     matched = text
                     break
+            # Fuzzy: try stripping apostrophes/hyphens/spaces
+            if matched is None:
+                def _norm(s: str) -> str:
+                    return s.lower().replace("'", "").replace("-", "").replace(" ", "")
+                pos_norm = _norm(pos_location_name)
+                for opt in options_els:
+                    text = opt.inner_text().strip()
+                    if _norm(text) == pos_norm:
+                        matched = text
+                        break
 
             if matched:
                 page.evaluate(
@@ -444,7 +460,8 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
                 )
                 filter_applied = True
                 if _verbose:
-                    print(f"  [✓] Revenue Centers filter applied via select#revenueCenterData")
+                    print(f"  [✓] Revenue Centers filter applied via select#revenueCenterData "
+                          f"(matched {matched!r})")
             else:
                 if _verbose:
                     print(f"  [!] select#revenueCenterData: no option matched {pos_location_name!r}")
