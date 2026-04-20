@@ -647,8 +647,10 @@ def stage_transform(
         else:
             df = pd.read_csv(raw_path, header=header_row, on_bad_lines="skip")
 
-        # Strip whitespace from column names
+        # Strip whitespace from column names and drop unnamed/empty columns
         df.columns = [str(c).strip() for c in df.columns]
+        df = df.loc[:, ~df.columns.str.startswith("Unnamed:")]
+        df = df.loc[:, df.columns != ""]
 
         # Drop aggregate "Totals:" rows — identified by NaN in "Menu Item #"
         df = df[df["Menu Item #"].notna()].copy()
@@ -717,8 +719,8 @@ def stage_transform(
         final_order = CONFIG.get("output_column_order", [])
         # Keep only columns that exist in df, in the specified order
         ordered = [c for c in final_order if c in df.columns]
-        # Append any unexpected extra columns at the end
-        extras = [c for c in df.columns if c not in ordered]
+        # Append any unexpected extra columns (skip unnamed/empty)
+        extras = [c for c in df.columns if c not in ordered and not c.startswith("Unnamed:") and c != ""]
         df = df[ordered + extras]
 
         # ── Export ────────────────────────────────────────────────
