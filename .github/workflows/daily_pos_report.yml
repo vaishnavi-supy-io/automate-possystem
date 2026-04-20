@@ -40,7 +40,7 @@ jobs:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
-        run: python automation.py --all-locations --all-locations
+        run: python automation.py --all-locations
 
       - name: Upload output as artifact (backup)
         if: always()
