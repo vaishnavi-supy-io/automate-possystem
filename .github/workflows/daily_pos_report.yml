@@ -10,7 +10,7 @@ jobs:
   run-pipeline:
     name: Download, Transform & Email Report
     runs-on: ubuntu-22.04
-    timeout-minutes: 120
+    timeout-minutes: 60
 
     steps:
       - name: Checkout repository
@@ -31,7 +31,7 @@ jobs:
         run: |
           playwright install chromium --with-deps
 
-      - name: Run pipeline
+      - name: Run Oracle BI pipeline (all locations, 5 parallel workers)
         working-directory: .
         env:
           PORTAL_USERNAME:    ${{ secrets.PORTAL_USERNAME }}
@@ -40,7 +40,17 @@ jobs:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
-        run: python automation.py --all-locations
+        run: python automation.py --all-locations --workers 5
+
+      - name: Run Joe Juice KSA pipeline
+        working-directory: .
+        env:
+          JJ_USERNAME:        ${{ secrets.JJ_USERNAME }}
+          JJ_PASSWORD:        ${{ secrets.JJ_PASSWORD }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: python joejuice_automation.py
 
       - name: Upload output as artifact (backup)
         if: always()

@@ -27,6 +27,7 @@ Exit codes:
 """
 
 import argparse
+import concurrent.futures
 import functools
 import json
 import os
@@ -837,6 +838,54 @@ def stage_email(
 # Orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
+def _worker(loc: dict, no_email: bool) -> dict:
+    """
+    Process one location in its own Playwright browser session.
+    Reads the shared cached session state (written by stage_auth before workers start).
+    Returns {"pos_name", "supy_name", "ok": bool, "stage": int, "error": str}.
+    """
+    pos_name  = loc["pos_name"]
+    supy_name = loc["supy_name"]
+    result    = {"pos_name": pos_name, "supy_name": supy_name, "ok": False, "stage": 0, "error": ""}
+
+    try:
+        with sync_playwright() as p:
+            browser = p.chromium.launch(headless=True)
+            ctx_kwargs: dict = {"accept_downloads": True}
+            if STORAGE_STATE_PATH.exists():
+                ctx_kwargs["storage_state"] = str(STORAGE_STATE_PATH)
+            context = browser.new_context(**ctx_kwargs)
+            page    = context.new_page()
+
+            # Stage 2 — download
+            result["stage"] = 2
+            raw_file = stage_navigate_and_download(page, location_name=pos_name)
+            browser.close()
+
+        # Stage 3 — transform (no browser needed)
+        result["stage"] = 3
+        out_file, row_count, business_date = stage_transform(raw_file, supy_name=supy_name)
+
+        # Stage 4 — email
+        result["stage"] = 4
+        if not no_email:
+            stage_email(out_file, row_count, business_date, location_label=supy_name)
+
+        result["ok"] = True
+
+    except Exception as exc:
+        result["error"] = str(exc)
+        try:
+            browser.close()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+
+    status = "✓" if result["ok"] else "✗"
+    print(f"  [{status}] {pos_name!r} → {supy_name!r}"
+          + (f" (stage {result['stage']} error: {result['error'][:80]})" if not result["ok"] else ""))
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oracle BI Automation Pipeline")
     parser.add_argument("--debug", action="store_true",
@@ -861,6 +910,10 @@ def main() -> int:
     parser.add_argument(
         "--list-locations", action="store_true",
         help="Print all active locations from config.yaml and exit",
+    )
+    parser.add_argument(
+        "--workers", type=int, default=5, metavar="N",
+        help="Number of parallel browser workers for --all-locations (default: 5)",
     )
 
     args = parser.parse_args()
@@ -980,77 +1033,39 @@ def main() -> int:
                         browser.close()
                         return 1
 
-                # ── Stage 2 + 3 + 4: per-location loop ────────────
+                # ── Stage 2 + 3 + 4: parallel per-location workers ────
                 if run_mode == "all_locations":
-                    failed_locations = []
-                    succeeded = 0
-
-                    for idx, loc in enumerate(active_locations, start=1):
-                        pos_name = loc["pos_name"]
-                        supy_name = loc["supy_name"]
-                        print(f"[Location {idx}/{len(active_locations)}] "
-                              f"{pos_name!r} → {supy_name!r}")
-
-                        # Stage 2
-                        try:
-                            raw_file = stage_navigate_and_download(page, location_name=pos_name)
-                            print(f"  [Stage 2] ✓ Downloaded → {raw_file.name}")
-                        except NavError as exc:
-                            log("nav", "navigate_and_download", "error",
-                                extra={"error": str(exc), "location": pos_name})
-                            print(f"  [✗] Nav error for {pos_name!r}: {exc} — skipping",
-                                  file=sys.stderr)
-                            failed_locations.append({"location": pos_name, "stage": 2,
-                                                      "error": str(exc)})
-                            continue
-
-                        # Stage 3
-                        try:
-                            out_file, row_count, business_date = stage_transform(
-                                raw_file, supy_name=supy_name
-                            )
-                            print(f"  [Stage 3] ✓ Transformed → {out_file.name} ({row_count} rows)")
-                        except TransformError as exc:
-                            log("transform", "transform", "error",
-                                extra={"error": str(exc), "location": supy_name})
-                            print(f"  [✗] Transform error for {supy_name!r}: {exc} — skipping",
-                                  file=sys.stderr)
-                            failed_locations.append({"location": supy_name, "stage": 3,
-                                                      "error": str(exc)})
-                            continue
-
-                        # Stage 4
-                        if not args.no_email:
-                            try:
-                                stage_email(out_file, row_count, business_date,
-                                            location_label=supy_name)
-                            except EmailError as exc:
-                                log("email", "send", "error",
-                                    extra={"error": str(exc), "location": supy_name})
-                                print(f"  [✗] Email error for {supy_name!r}: {exc}",
-                                      file=sys.stderr)
-                                print(f"       Report saved → {out_file}", file=sys.stderr)
-                                failed_locations.append({"location": supy_name, "stage": 4,
-                                                          "error": str(exc)})
-                                # Do NOT continue — file was generated; count as partial success
-                        else:
-                            print(f"  [Stage 4] Skipped (--no-email). File → {out_file}\n")
-
-                        succeeded += 1
-
+                    # Auth is done; session state written to disk. Close auth browser.
                     browser.close()
+
+                    n_workers = min(args.workers, len(active_locations))
+                    print(f"[→] Spawning {n_workers} parallel workers for "
+                          f"{len(active_locations)} locations...\n")
+
+                    worker_fn = functools.partial(_worker, no_email=args.no_email)
+
+                    results = []
+                    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
+                        futures = {
+                            pool.submit(worker_fn, loc): loc
+                            for loc in active_locations
+                        }
+                        for fut in concurrent.futures.as_completed(futures):
+                            results.append(fut.result())
+
+                    succeeded = sum(1 for r in results if r["ok"])
+                    failed = [r for r in results if not r["ok"]]
 
                     # Summary
                     print(f"\n{'─'*60}")
                     print(f"[✓] All-locations run complete.  run_id={RUN_ID}")
                     print(f"    Succeeded: {succeeded}/{len(active_locations)}")
-                    if failed_locations:
-                        print(f"    Failed ({len(failed_locations)}):")
-                        for fl in failed_locations:
-                            print(f"      • [stage {fl['stage']}] {fl['location']}: {fl['error']}")
+                    if failed:
+                        print(f"    Failed ({len(failed)}):")
+                        for r in failed:
+                            print(f"      • [stage {r['stage']}] {r['pos_name']}: {r['error']}")
                     print(f"{'─'*60}\n")
 
-                    # Return non-zero only if ALL locations failed
                     return 0 if succeeded > 0 else 2
 
                 elif run_mode == "single_location":
