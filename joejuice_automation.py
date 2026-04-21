@@ -77,10 +77,10 @@ LOCATIONS = {
     "50016": ("50016 - J & J - King Abdul Aziz, Riyadh - Kitchen",   "Al Sulimaniyah"),
     "50017": ("50017 - J & J - Cloud Aqiq, Riyadh - Kitchen",        "Aqiq Cloud"),
     # 50018/50019/50021/50022 N/A
-    "50020": ("50020 - J & J - Al Hassa Squar, Al Khobar - Kitchen", "new location - Hessa Square"),
-    "50023": ("50023 - J & J promenade Sports Boulevard, Riyadh",    "new location - Sports Boulevard"),
-    "50025": ("50025 - J & J - Laysen valley, Riyadh",               "new location - Laysen Valley"),
-    "JJ-E1": ("J & J - Event Al Hasa - Kitchen",                     "new location - Joe Events Bar 1"),
+    "50020": ("50020 - J & J - Al Hassa Squar, Al Khobar - Kitchen", "Hessa Square"),
+    "50023": ("50023 - J & J promenade Sports Boulevard, Riyadh",    "Sports Boulevard"),
+    "50025": ("50025 - J & J - Laysen valley, Riyadh",               "Laysen Valley"),
+    "JJ-E1": ("J & J - Event Al Hasa - Kitchen",                     "Joe Event Bar 1"),
 
     # ── Parker's KSA (20xxx) ─────────────────────────────────────────────────
     "20001": ("20001 - Parker's - DQ, Riyadh",                       "Parkers-DQ"),
@@ -175,14 +175,25 @@ def get_token() -> str:
 # ── Workplaces ────────────────────────────────────────────────────────────────
 
 def get_workplace_map(token: str) -> dict[str, int]:
-    """Return {stripped_name: workplace_id} for all KSA workplaces."""
-    r = requests.get(
-        f"{JJ_API_BASE}/shiftplanning/workplaces?filter=%3Amarket.id%3D%3D%2738%27&limit=200&sort=%3Asort_order%2B",
-        headers={"Authorization": token},
-        timeout=15,
-    )
-    r.raise_for_status()
-    return {w["name"].strip(): w["id"] for w in r.json()["data"]}
+    """Return {stripped_name: workplace_id} for ALL workplaces (all brands/markets)."""
+    all_workplaces = {}
+    limit  = 500
+    offset = 0
+    while True:
+        r = requests.get(
+            f"{JJ_API_BASE}/shiftplanning/workplaces",
+            params={"limit": limit, "offset": offset, "sort": ":sort_order+"},
+            headers={"Authorization": token},
+            timeout=30,
+        )
+        r.raise_for_status()
+        data = r.json().get("data", [])
+        for w in data:
+            all_workplaces[w["name"].strip()] = w["id"]
+        if len(data) < limit:
+            break   # last page
+        offset += limit
+    return all_workplaces
 
 
 def resolve_workplace_id(pos_name: str, workplace_map: dict) -> int | None:
