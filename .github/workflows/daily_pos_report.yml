@@ -40,7 +40,7 @@ jobs:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
-        run: python automation.py --all-locations --workers 5
+        run: python automation.py --all-locations --workers 5 --limit 5
 
       - name: Run Joe Juice KSA pipeline
         working-directory: .
@@ -50,7 +50,7 @@ jobs:
           GMAIL_USER:         ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
-        run: python joejuice_automation.py
+        run: python joejuice_automation.py --limit 5
 
       - name: Upload output as artifact (backup)
         if: always()
