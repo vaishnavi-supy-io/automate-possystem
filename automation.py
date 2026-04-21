@@ -133,6 +133,10 @@ class NavError(Exception):
     """Menu navigation or download failure — retryable."""
 
 
+class NoDataError(Exception):
+    """Location had no data for this date — skip gracefully, not a failure."""
+
+
 class TransformError(Exception):
     """Data transformation failure — raw file is preserved."""
 
@@ -485,10 +489,55 @@ def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
         if _verbose:
             print(f"  [!] Could not click Run Report: {e}")
 
-    # Wait for the Excel download button to appear (report finished rendering)
+    # Wait for the Excel download button to appear (report finished rendering).
+    # Poll every 3 s so we can detect "no data" state early instead of
+    # burning the full 120 s timeout on locations with zero sales.
     try:
-        final_step = CONFIG["navigation"][-1]
-        page.wait_for_selector(final_step["click"], state="visible", timeout=120_000)
+        final_step  = CONFIG["navigation"][-1]
+        excel_sel   = final_step["click"]           # img[title='Excel (.xlsx)']
+        deadline    = time.monotonic() + 90         # max 90 s (down from 120 s)
+        no_data_js  = (
+            "() => {"
+            "  const txt = document.body?.innerText || '';"
+            "  return /no data|no rows|0 rows|there is no data/i.test(txt);"
+            "}"
+        )
+        # Also check inside any iframes
+        no_data_frame_js = (
+            "() => {"
+            "  try {"
+            "    for (const fr of document.querySelectorAll('iframe')) {"
+            "      const t = fr.contentDocument?.body?.innerText || '';"
+            "      if (/no data|no rows|0 rows|there is no data/i.test(t)) return true;"
+            "    }"
+            "  } catch(e) {}"
+            "  return false;"
+            "}"
+        )
+        while time.monotonic() < deadline:
+            if page.locator(excel_sel).is_visible():
+                break                               # ✓ report rendered with data
+            # Check main page + iframes for "no data" text
+            try:
+                if page.evaluate(no_data_js) or page.evaluate(no_data_frame_js):
+                    raise NoDataError(
+                        f"No data for {pos_location_name!r} on this date"
+                    )
+            except NoDataError:
+                raise
+            except Exception:
+                pass
+            time.sleep(3)
+        else:
+            raise NavError(
+                f"Report did not finish rendering after filter for {pos_location_name!r}: "
+                f"Excel button never became visible after 90 s"
+            )
+    except NoDataError:
+        raise                                       # bubble up — not a NavError
+    except NavError:
+        screenshot(page, "nav", f"filter_error_{_sanitize_filename(pos_location_name)}")
+        raise
     except Exception as exc:
         screenshot(page, "nav", f"filter_error_{_sanitize_filename(pos_location_name)}")
         raise NavError(
@@ -841,12 +890,17 @@ def stage_email(
 def _worker(loc: dict, no_email: bool) -> dict:
     """
     Process one location in its own Playwright browser session.
-    Reads the shared cached session state (written by stage_auth before workers start).
-    Returns {"pos_name", "supy_name", "ok": bool, "stage": int, "error": str}.
+    Returns dict with keys: pos_name, supy_name, ok, no_data, stage, error,
+                            row_count, business_date.
     """
     pos_name  = loc["pos_name"]
     supy_name = loc["supy_name"]
-    result    = {"pos_name": pos_name, "supy_name": supy_name, "ok": False, "stage": 0, "error": ""}
+    result    = {
+        "pos_name": pos_name, "supy_name": supy_name,
+        "ok": False, "no_data": False,
+        "stage": 0, "error": "",
+        "row_count": 0, "business_date": "",
+    }
 
     try:
         with sync_playwright() as p:
@@ -865,6 +919,8 @@ def _worker(loc: dict, no_email: bool) -> dict:
         # Stage 3 — transform (no browser needed)
         result["stage"] = 3
         out_file, row_count, business_date = stage_transform(raw_file, supy_name=supy_name)
+        result["row_count"]     = row_count
+        result["business_date"] = business_date
 
         # Stage 4 — email
         result["stage"] = 4
@@ -873,6 +929,14 @@ def _worker(loc: dict, no_email: bool) -> dict:
 
         result["ok"] = True
 
+    except NoDataError as exc:
+        result["no_data"] = True
+        result["error"]   = str(exc)
+        try:
+            browser.close()  # type: ignore[possibly-undefined]
+        except Exception:
+            pass
+
     except Exception as exc:
         result["error"] = str(exc)
         try:
@@ -880,10 +944,64 @@ def _worker(loc: dict, no_email: bool) -> dict:
         except Exception:
             pass
 
-    status = "✓" if result["ok"] else "✗"
-    print(f"  [{status}] {pos_name!r} → {supy_name!r}"
-          + (f" (stage {result['stage']} error: {result['error'][:80]})" if not result["ok"] else ""))
+    if result["ok"]:
+        print(f"  [✓] {supy_name!r}  ({result['row_count']} rows)")
+    elif result["no_data"]:
+        print(f"  [–] {supy_name!r}  (no data)")
+    else:
+        print(f"  [✗] {supy_name!r}  stage {result['stage']}: {result['error'][:80]}")
     return result
+
+
+def _send_digest_email(results: list[dict], report_date: str) -> None:
+    """Send one summary email listing all Oracle BI locations and their status."""
+    gmail_user     = os.environ.get("GMAIL_USER", "")
+    gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
+    recipient      = os.environ.get("REPORT_RECIPIENT", "")
+    if not gmail_user or not gmail_password or not recipient:
+        return
+
+    ok_rows      = [r for r in results if r["ok"]]
+    no_data_rows = [r for r in results if r["no_data"]]
+    failed_rows  = [r for r in results if not r["ok"] and not r["no_data"]]
+
+    lines = [
+        f"Oracle BI Daily Run Summary — {report_date}",
+        f"Run ID: {RUN_ID}",
+        "",
+        f"  ✅  Succeeded : {len(ok_rows)}",
+        f"  –   No data   : {len(no_data_rows)}",
+        f"  ❌  Failed    : {len(failed_rows)}",
+        f"  Total         : {len(results)}",
+        "",
+        "─" * 60,
+        f"{'Location':<45} {'Rows':>6}  Status",
+        "─" * 60,
+    ]
+    for r in sorted(results, key=lambda x: x["supy_name"]):
+        if r["ok"]:
+            status = f"✅  {r['row_count']:,} rows"
+        elif r["no_data"]:
+            status = "–  no data"
+        else:
+            status = f"❌  {r['error'][:40]}"
+        lines.append(f"{r['supy_name'][:45]:<45}  {status}")
+
+    body = "\n".join(lines)
+
+    msg = MIMEMultipart()
+    msg["From"]    = gmail_user
+    msg["To"]      = recipient
+    msg["Subject"] = f"[Summary] Oracle BI Run — {report_date} — {len(ok_rows)}/{len(results)} OK"
+    msg.attach(MIMEText(body, "plain"))
+
+    try:
+        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
+            server.login(gmail_user, gmail_password)
+            server.sendmail(gmail_user, recipient, msg.as_string())
+        print(f"\n[Digest] Summary email sent → {recipient}")
+    except Exception as exc:
+        print(f"\n[Digest] Failed to send summary email: {exc}", file=sys.stderr)
 
 
 def main() -> int:
@@ -1060,17 +1178,26 @@ def main() -> int:
                             results.append(fut.result())
 
                     succeeded = sum(1 for r in results if r["ok"])
-                    failed = [r for r in results if not r["ok"]]
+                    no_data   = sum(1 for r in results if r["no_data"])
+                    failed    = [r for r in results if not r["ok"] and not r["no_data"]]
 
-                    # Summary
+                    # Console summary
                     print(f"\n{'─'*60}")
                     print(f"[✓] All-locations run complete.  run_id={RUN_ID}")
-                    print(f"    Succeeded: {succeeded}/{len(active_locations)}")
+                    print(f"    Succeeded : {succeeded}/{len(active_locations)}")
+                    print(f"    No data   : {no_data}")
                     if failed:
                         print(f"    Failed ({len(failed)}):")
                         for r in failed:
                             print(f"      • [stage {r['stage']}] {r['pos_name']}: {r['error']}")
                     print(f"{'─'*60}\n")
+
+                    # Digest email — one summary to the recipient
+                    report_date = next(
+                        (r["business_date"] for r in results if r["business_date"]), ""
+                    )
+                    if not args.no_email:
+                        _send_digest_email(results, report_date)
 
                     return 0 if succeeded > 0 else 2
 

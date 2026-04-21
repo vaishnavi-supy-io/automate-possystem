@@ -58,25 +58,70 @@ SAR_CURRENCY_ID = 15
 # ── Location mapping: code → (supy_label, pos_name) ──────────────────────────
 # pos_name must match the workplace name in the portal exactly (stripped).
 LOCATIONS = {
-    "50001": ("50001 - J & J - Al Bahar",       "Khobar Al Bahar"),
-    "50002": ("50002 - J & J - Bujairi",         "Bujairi Terrace [Diriyah]"),
-    "50003": ("50003 - J & J - DQ",              "Diplomatic Quarter"),
-    "50004": ("50004 - J & J - Granada Cloud",   "Ghirnatah Cloud Campus"),
-    "50005": ("50005 - J & J - KAFD",            "KAFD"),
-    "50006": ("50006 - J & J - Olaya Khobar",    "Khobar Olaya"),
-    "50007": ("50007 - J & J - Khoja Jeddah",    "Khojah Street"),
-    "50008": ("50008 - J & J - Kingdom Tower",   "Kingdom Tower"),
-    "50010": ("50010 - J & J - Muhammadia",      "Al Muhammadiyah"),
-    "50011": ("50011 - J & J - Narjis",          "Al Narjes"),
-    "50012": ("50012 - J & J - Saad Square",     "Saad Square"),
-    "50013": ("50013 - J & J - Solitaire",       "Solitaire Mall"),
-    "50015": ("50015 - J & J - La Strada Yard",  "La Strada Yard"),
-    "50016": ("50016 - J & J - Al Sulimaniyah",  "Al Sulimaniyah"),
-    "50017": ("50017 - J & J - Aqiq Cloud",      "Aqiq Cloud"),
-    "50020": ("50020 - J & J - Hessa Square",    "Hessa Square"),
-    "50023": ("50023 - J & J - Sports Blvd",     "Sports Boulevard"),
-    "50025": ("50025 - J & J - Laysen Valley",   "Laysen Valley"),
-    "JJ-E1": ("J & J - Event Bar 1",             "Joe Event Bar 1"),
+    # ── J & J (50xxx) ────────────────────────────────────────────────────────
+    "50001": ("50001 - J & J - Al Bahar, Riyadh - Kitchen",          "Khobar Al Bahar"),
+    "50002": ("50002 - J & J - Bujairi, Riyadh - Kitchen",           "Bujairi Terrace [Diriyah]"),
+    "50003": ("50003 - J & J - DQ, Riyadh - Kitchen",                "Diplomatic Quarter"),
+    "50004": ("50004 - J & J - Granada Cloud, Riyadh - Kitchen",     "Ghirnatah Cloud Campus"),
+    "50005": ("50005 - J & J - KAFD, Riyadh - Kitchen",              "KAFD"),
+    "50006": ("50006 - J & J - Olaya, Al Khobar - Kitchen",          "Khobar Olaya"),
+    "50007": ("50007 - J & J - Khoja, Jeddah - Kitchen",             "Khojah Street"),
+    "50008": ("50008 - J & J - Kingdom Tower, Riyadh - Kitchen",     "Kingdom Tower"),
+    # 50009 LOCATION CLOSED
+    "50010": ("50010 - J & J - Muhammadia, Riyadh - Kitchen",        "Al Muhammadiyah"),
+    "50011": ("50011 - J & J - Narjis, Riyadh - Kitchen",            "Al Narjes"),
+    "50012": ("50012 - J & J - Saad Square, Riyadh - Kitchen",       "Saad Square"),
+    "50013": ("50013 - J & J - Solitaire, Riyadh - Kitchen",         "Solitaire Mall"),
+    # 50014 N/A
+    "50015": ("50015 - J & J - La Strada Yard, Riyadh - Kitchen",    "La Strada Yard"),
+    "50016": ("50016 - J & J - King Abdul Aziz, Riyadh - Kitchen",   "Al Sulimaniyah"),
+    "50017": ("50017 - J & J - Cloud Aqiq, Riyadh - Kitchen",        "Aqiq Cloud"),
+    # 50018/50019/50021/50022 N/A
+    "50020": ("50020 - J & J - Al Hassa Squar, Al Khobar - Kitchen", "new location - Hessa Square"),
+    "50023": ("50023 - J & J promenade Sports Boulevard, Riyadh",    "new location - Sports Boulevard"),
+    "50025": ("50025 - J & J - Laysen valley, Riyadh",               "new location - Laysen Valley"),
+    "JJ-E1": ("J & J - Event Al Hasa - Kitchen",                     "new location - Joe Events Bar 1"),
+
+    # ── Parker's KSA (20xxx) ─────────────────────────────────────────────────
+    "20001": ("20001 - Parker's - DQ, Riyadh",                       "Parkers-DQ"),
+    "20002": ("20002 - Parker's - Olaya, Al Khobar",                 "Parkers-Khobar"),
+    # 20003 Location Name not mentioned in POS
+    "20004": ("20004 - Parker's - Solitaire, Riyadh",                "Parkers Solitaire"),
+    "20007": ("20007 - Parker's - Al Bahar - Al Bahar",              "PARKER'S AL BAHAR"),
+
+    # ── Public KSA (40xxx) ───────────────────────────────────────────────────
+    "40001": ("40001 - Public - Dabab, Riyadh",                      "Public-Dabbab"),
+    "40002": ("40002 - Public - Al Khobar",                          "Public-Khobar"),
+    "40003": ("40003 - Public - DQ, Riyadh",                         "Public DQ"),
+    # 40004 Location Name not mentioned in POS
+
+    # ── Somewhere KSA (30xxx) ────────────────────────────────────────────────
+    "30001": ("30001 - SMW - Al Ula",                                 "Somewhere-Alula 2"),
+    "30002": ("30002 - SMW - Bujairi, Riyadh",                       "Somewhere-Bujairi"),
+    "30003": ("30003 - SMW - Riyadh Front, KKIA",                    "Somewhere-Riyadh Front"),
+    # 30004 Location Name not mentioned in POS
+    "30005": ("30005 - SMW - Solitaire, Riyadh",                     "Somewhere Solitaire"),
+    "SMW-KX": ("SMW Khobar, Khobar X Mall",                          "Somewhere-ALKhobar X"),
+
+    # ── Salt KSA (10xxx) ─────────────────────────────────────────────────────
+    "10001": ("10001 - Salt - Al Bahar, Al Khobar",                  "Find Salt-Salt Albahar"),
+    "10003": ("10003 - Salt - Elephant Rock, Al Ula",                "Find Salt-Alula"),
+    "10004": ("10004 - Salt - Cloud Kitchen - Ghirnatah",            "Find Salt-CK Gharnatha"),
+    "10005": ("10005 - Salt - Olaya, Al Khobar",                     "Find Salt-Khobar Park"),
+    "10006": ("10006 - Salt - Nakheel Mall, Dammam",                 "Find Salt-Nakheel Mall"),
+    "10007": ("10007 - Salt - Riyadh Park Mall",                     "Find Salt-Riyad Park"),
+    "10008": ("10008 - Salt - Saad Square, Riyadh",                  "Find Salt-Saad Square"),
+    "10009": ("10009 - Salt - UWalk, Riyadh",                        "Find Salt-Uwalk"),
+    "10011": ("10011 - Salt - Events Truck 1",                       "Find Salt-Food Truck KSA-1"),
+    "10012": ("10012 - Salt - Events Truck 2",                       "Find Salt-Food Truck KSA-2"),
+    "10013": ("10013 - Salt - Events Truck 3",                       "Find Salt-Food Truck KSA-3"),
+    "10014": ("10014 - Salt - Events Truck 4",                       "Find Salt- Food Truck KSA-4"),
+    "10015": ("10015 - Salt - Events Truck 5",                       "Find Salt- Food Truck KSA-5"),
+    "10016": ("10016 - Salt - Events Ksa 3",                         "Find Salt-Events KSA-3"),
+    # 10017 N/A
+
+    # ── Play ─────────────────────────────────────────────────────────────────
+    "Play-KX": ("Play - Khobar X",                                   "Play Khobar x"),
 }
 
 
@@ -325,18 +370,50 @@ def main():
         codes = codes[:args.limit]
 
     ok, fail = 0, 0
+    results = []
     for code in codes:
         if code not in LOCATIONS:
             print(f"[!] Unknown code: {code}")
             fail += 1
             continue
         success = run_location(code, token, workplace_map, report_date, args.no_email)
+        results.append({"code": code, "ok": success})
         if success:
             ok += 1
         else:
             fail += 1
 
     print(f"\n[Done] {ok} succeeded, {fail} failed  |  date={report_date}")
+
+    # ── Digest summary email ──────────────────────────────────────────────────
+    if not args.no_email and not args.location and GMAIL_USER and GMAIL_PASS:
+        lines = [
+            f"Joe Juice KSA Daily Run Summary — {report_date}",
+            f"  ✅ Succeeded : {ok}",
+            f"  ❌ Failed    : {fail}",
+            f"  Total       : {ok + fail}",
+            "",
+            "─" * 50,
+        ]
+        for r in results:
+            code = r["code"]
+            label, pos_name = LOCATIONS.get(code, (code, code))
+            status = "✅" if r["ok"] else "❌"
+            lines.append(f"{status}  {code:<8}  {label}")
+
+        body = "\n".join(lines)
+        msg = MIMEMultipart()
+        msg["From"]    = GMAIL_USER
+        msg["To"]      = REPORT_RECIPIENT
+        msg["Subject"] = f"[Summary] Joe Juice KSA Run — {report_date} — {ok}/{ok+fail} OK"
+        msg.attach(MIMEText(body, "plain"))
+        try:
+            with smtplib.SMTP_SSL("smtp.gmail.com", 465) as smtp:
+                smtp.login(GMAIL_USER, GMAIL_PASS)
+                smtp.sendmail(GMAIL_USER, REPORT_RECIPIENT, msg.as_string())
+            print(f"[Digest] Summary email sent → {REPORT_RECIPIENT}")
+        except Exception as e:
+            print(f"[Digest] Failed to send summary: {e}")
 
 
 if __name__ == "__main__":
