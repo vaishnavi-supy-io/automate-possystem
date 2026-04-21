@@ -299,6 +299,8 @@ def main():
     parser.add_argument("--location",       default=None,  help="Run for single location code (e.g. 50001)")
     parser.add_argument("--list-locations", action="store_true", help="Print all mapped locations and exit")
     parser.add_argument("--no-email",       action="store_true", help="Skip email, save files only")
+    parser.add_argument("--limit",          type=int, default=None, metavar="N",
+                        help="Cap number of locations processed (for testing, e.g. --limit 5)")
     args = parser.parse_args()
 
     if args.list_locations:
@@ -319,6 +321,8 @@ def main():
     print(f"[Workplaces] {len(workplace_map)} workplaces found")
 
     codes = [args.location] if args.location else list(LOCATIONS.keys())
+    if args.limit:
+        codes = codes[:args.limit]
 
     ok, fail = 0, 0
     for code in codes:

@@ -915,6 +915,10 @@ def main() -> int:
         "--workers", type=int, default=5, metavar="N",
         help="Number of parallel browser workers for --all-locations (default: 5)",
     )
+    parser.add_argument(
+        "--limit", type=int, default=None, metavar="N",
+        help="Cap the number of locations processed (for testing, e.g. --limit 5)",
+    )
 
     args = parser.parse_args()
 
@@ -939,6 +943,8 @@ def main() -> int:
     # legacy mode: no location filter (original single-report behaviour)
 
     active_locations = _get_active_locations()
+    if args.limit:
+        active_locations = active_locations[:args.limit]
 
     if args.all_locations:
         if not active_locations:
