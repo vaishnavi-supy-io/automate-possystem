@@ -1,0 +1,174 @@
+# ============================================================
+# Sapapad Automation — Configuration
+# ============================================================
+
+portal:
+  login_url: "https://pos.sapaad.com/"
+  portal_url: "https://pos.sapaad.com/dashboard"
+  report_url: "https://pos.sapaad.com/reports/top_grossing_items?order_by=totalamount&sort_by=DESC"
+  # Element present only when logged in — used to validate cached session
+  authenticated_element: ".LoginDetRight"
+
+# -------------------------------------------------------
+# LOGIN FIELD SELECTORS
+# -------------------------------------------------------
+selectors:
+  username_field: "#user_email"
+  company_field: ""
+  password_field: "#user_password"
+  login_button: "button.mt-5"
+  login_error: ""
+
+# -------------------------------------------------------
+# NAVIGATION CHAIN
+#
+# Action types:
+#   click            — wait for selector, click it, optionally wait for next el
+#   wait_seconds     — sleep N seconds (for async ops like export queue)
+#   accept_modal     — click an OK button inside an HTML modal
+#   goto_url         — navigate to a URL
+#   download_latest  — click first download link; polls page up to poll_attempts
+#                      times (with poll_interval_s between each) if not found yet
+# -------------------------------------------------------
+navigation:
+  # Step 1 — open the date picker dropdown
+  - step: "Open date filter"
+    action: click
+    click: ".dateFilterToggle"
+    wait: "a.customDateSelection"
+
+  # Step 2 — select Yesterday (auto-applies, no separate Apply button needed)
+  - step: "Select Yesterday"
+    action: click
+    click: "a.customDateSelection:has-text('Yesterday')"
+    wait: ".dateFilterToggle:has-text('Yesterday')"
+
+  # Step 3 — click the Excel/CSV export icon
+  - step: "Click Export icon"
+    action: click
+    click: "a:has(i.fa-file-excel-o)"
+    wait: "button.closeCsv"
+
+  # Step 4 — dismiss the "data is being exported" HTML modal
+  - step: "Dismiss export modal"
+    action: accept_modal
+    modal_ok_selector: "button.closeCsv"
+    wait: null
+
+  # Step 5 — wait for the export job to complete on the server (~20-30s)
+  - step: "Wait for export to process"
+    action: wait_seconds
+    seconds: 25
+
+  # Step 6 — navigate to Saved Reports
+  - step: "Go to Saved Reports"
+    action: goto_url
+    url: "https://pos.sapaad.com/dashboard/saved_reports"
+    wait: null
+
+  # Step 7 — download the most recently generated CSV
+  # polls the page (refreshes) until the link appears, up to poll_attempts times
+  - step: "Download CSV"
+    action: download_latest
+    click: "a:has-text('Download csv')"
+    poll_attempts: 6
+    poll_interval_s: 15
+    wait: null
+
+# -------------------------------------------------------
+# HEADER DETECTION
+# The CSV from Sapaad has a clean header row — no metadata
+# rows to scan past. Leave empty to use row 0 as header.
+# -------------------------------------------------------
+header_sentinel: ""
+
+# -------------------------------------------------------
+# AGGREGATE ROW DETECTION
+# No total/subtotal rows in Sapaad CSV. Leave empty to skip
+# numeric-ID filtering. Rows where Item Name is null are
+# still dropped in the transform.
+# -------------------------------------------------------
+id_column: ""
+
+# -------------------------------------------------------
+# ITEM CODE MAPPING
+# Item Code column is always empty in Sapaad CSV.
+# Join on Item Name instead.
+# -------------------------------------------------------
+item_code_mapping:
+  file: "mappings/sapapad_item_codes.csv"
+  raw_key: "Item Name"        # column in Sapapad CSV — primary join key
+  ref_key: "item_name"        # matching column in mapping file
+  raw_category_key: "Category"    # used to disambiguate duplicate item names
+  ref_category_key: "category_name"
+  target_col: "item_id"       # column in mapping file with the Supy item ID
+  output_col: "POS Item ID *"
+
+# -------------------------------------------------------
+# COLUMN MAPPING
+# -------------------------------------------------------
+columns:
+  - raw: "Item Name"
+    target: "POS Item Name"
+    dtype: str
+
+  - raw: "Total Sold"
+    target: "Sold QTY *"
+    dtype: int
+
+  - raw: "Total Amount Excluding Tax"
+    target: "Total sales excl. tax *"
+    dtype: float
+
+  - raw: "Total Amount"
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  # Injected — not in raw CSV
+  - raw: null
+    target: "Sales Date *"
+    dtype: date
+    inject: date_yesterday         # yesterday's date, formatted per output_date_format
+
+  - raw: null
+    target: "Total Discount Value"
+    dtype: float
+    inject: empty
+
+  - raw: null
+    target: "Order ID"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sales Type Code"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Parent Item ID"
+    dtype: str
+    inject: empty
+
+  # Drop — present in raw but excluded from output
+  - raw: "Category"
+    target: null
+    drop: true
+
+  - raw: "Item Code"
+    target: null
+    drop: true
+
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+  - "Parent Item ID"
+
+output_date_format: "%d-%b-%Y"

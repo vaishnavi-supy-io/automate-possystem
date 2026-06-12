@@ -1,0 +1,50 @@
+name: Daily Sapapad POS Report
+
+on:
+  schedule:
+    # 04:00 UTC = 08:00 Dubai (UTC+4) — no daylight saving in UAE
+    - cron: "0 4 * * *"
+  workflow_dispatch: # allow manual trigger from GitHub UI
+
+jobs:
+  run-pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright + Chromium
+        run: playwright install chromium --with-deps
+
+      - name: Create runtime directories
+        run: mkdir -p downloads output state/sapapad logs screenshots mappings
+
+      - name: Run Sapapad per-branch pipeline
+        env:
+          SAPAPAD_USERNAME:         ${{ secrets.SAPAPAD_USERNAME }}
+          SAPAPAD_PASSWORD:         ${{ secrets.SAPAPAD_PASSWORD }}
+          SAPAPAD_REPORT_RECIPIENT: ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
+          GMAIL_USER:               ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:       ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: python sapapad_automation.py --per-branch
+
+      - name: Upload logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: logs-${{ github.run_id }}
+          path: |
+            logs/
+            screenshots/
+          retention-days: 7
