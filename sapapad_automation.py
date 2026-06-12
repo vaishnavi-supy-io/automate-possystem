@@ -28,6 +28,7 @@ import functools
 import json
 import os
 import pathlib
+import re
 import smtplib
 import sys
 import time
@@ -37,6 +38,7 @@ from datetime import datetime
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
+from html import escape as html_escape
 from typing import Optional
 
 import pandas as pd
@@ -281,13 +283,14 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
         screenshot(page, "auth", "01_login_page")
 
         page.wait_for_selector(sel["username_field"], timeout=10_000)
+        # Screenshot taken before filling so credentials never appear in an artifact
+        screenshot(page, "auth", "02_before_fill")
         page.fill(sel["username_field"], username)
 
         if sel.get("company_field") and sel["company_field"] not in ("", "FILL_IN"):
             page.fill(sel["company_field"], company)
 
         page.fill(sel["password_field"], password)
-        screenshot(page, "auth", "02_fields_filled")
 
         with page.expect_navigation(wait_until="domcontentloaded", timeout=45_000):
             page.click(sel["login_button"])
@@ -296,6 +299,12 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
         if error_sel:
             try:
                 page.wait_for_selector(error_sel, timeout=3_000)
+                # Clear credential fields before screenshotting so they don't appear in artifacts
+                try:
+                    page.fill(sel["username_field"], "")
+                    page.fill(sel["password_field"], "")
+                except Exception:
+                    pass
                 screenshot(page, "auth", "03_login_error")
                 raise AuthError("Login failed — error element detected on page.")
             except AuthError:
@@ -421,7 +430,7 @@ def stage_navigate_and_download(
                 page.wait_for_selector(click_sel, state="visible", timeout=15_000)
                 screenshot(page, "nav", "before_download")
 
-                branch_slug = branch_name.replace(" ", "_") if branch_name else "all"
+                branch_slug = re.sub(r"[^A-Za-z0-9_-]", "_", branch_name) if branch_name else "all"
                 with page.expect_download(timeout=120_000) as dl_info:
                     page.click(click_sel)
 
@@ -777,7 +786,7 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
 
         # ── Export ────────────────────────────────────────────
         today      = datetime.now().strftime("%Y-%m-%d")
-        branch_slug = branch_name.replace(" ", "_") if branch_name else "all_locations"
+        branch_slug = re.sub(r"[^A-Za-z0-9_-]", "_", branch_name) if branch_name else "all_locations"
         out_path   = OUTPUT_DIR / f"sapapad_{branch_slug}_{today}_{RUN_ID[:8]}.xlsx"
         df.to_excel(str(out_path), index=False, engine="openpyxl")
 
@@ -1075,7 +1084,10 @@ def stage_email(
     branch_label = f" — {branch_name}" if branch_name else ""
     vr_status = verification.status() if verification else "PASS"
     warn_tag = " [WARNINGS]" if vr_status in ("WARN", "FAIL") else ""
-    subject = f"Sapapad POS Sales Report{branch_label} — {report_date}{warn_tag}"
+    # Strip CR/LF to prevent email header injection
+    subject = (
+        f"Sapapad POS Sales Report{branch_label} — {report_date}{warn_tag}"
+    ).replace("\r", " ").replace("\n", " ")
 
     # ── Build verification block ──────────────────────────────────────────────
     if verification:
@@ -1089,7 +1101,7 @@ def stage_email(
             vr_bg    = "#fffbeb"
             vr_badge = "WARNINGS"
             items    = "".join(
-                f"<li style='margin-bottom:4px;color:#92400e;'>{w}</li>"
+                f"<li style='margin-bottom:4px;color:#92400e;'>{html_escape(w)}</li>"
                 for w in (verification.warnings + verification.errors)
             )
             vr_html  = f"<ul style='margin:8px 0 0 0;padding-left:20px;'>{items}</ul>"
@@ -1098,7 +1110,7 @@ def stage_email(
             vr_bg    = "#fef2f2"
             vr_badge = "FAILED"
             items    = "".join(
-                f"<li style='margin-bottom:4px;color:#991b1b;'>{e}</li>"
+                f"<li style='margin-bottom:4px;color:#991b1b;'>{html_escape(e)}</li>"
                 for e in (verification.errors + verification.warnings)
             )
             vr_html  = f"<ul style='margin:8px 0 0 0;padding-left:20px;'>{items}</ul>"
@@ -1165,10 +1177,10 @@ def stage_email(
         <tr>
           <td style="padding:28px 32px 0;">
             <p style="margin:0;font-size:18px;font-weight:600;color:#1e1b4b;">
-              {branch_name or 'All Locations'}
+              {html_escape(branch_name or 'All Locations')}
             </p>
             <p style="margin:4px 0 0;font-size:14px;color:#6d28d9;">
-              {report_date}
+              {html_escape(report_date)}
             </p>
           </td>
         </tr>
@@ -1195,7 +1207,7 @@ def stage_email(
                     <p style="margin:0;font-size:11px;font-weight:600;color:#7c3aed;
                                text-transform:uppercase;letter-spacing:.05em;">Report Date</p>
                     <p style="margin:6px 0 0;font-size:18px;font-weight:700;
-                               color:#1e1b4b;">{report_date}</p>
+                               color:#1e1b4b;">{html_escape(report_date)}</p>
                     <p style="margin:2px 0 0;font-size:11px;color:#6b7280;">yesterday</p>
                   </div>
                 </td>
@@ -1212,19 +1224,19 @@ def stage_email(
               <tr style="border-bottom:1px solid #ede9fe;">
                 <td style="padding:10px 0;color:#6b7280;width:110px;">Branch</td>
                 <td style="padding:10px 0;color:#1e1b4b;font-weight:500;">
-                  {branch_name or 'All Locations'}
+                  {html_escape(branch_name or 'All Locations')}
                 </td>
               </tr>
               <tr style="border-bottom:1px solid #ede9fe;">
                 <td style="padding:10px 0;color:#6b7280;">File</td>
                 <td style="padding:10px 0;color:#1e1b4b;font-weight:500;word-break:break-all;">
-                  {out_path.name}
+                  {html_escape(out_path.name)}
                 </td>
               </tr>
               <tr>
                 <td style="padding:10px 0;color:#6b7280;">Run ID</td>
                 <td style="padding:10px 0;color:#9ca3af;font-family:monospace;font-size:12px;">
-                  {RUN_ID}
+                  {html_escape(RUN_ID)}
                 </td>
               </tr>
             </table>
