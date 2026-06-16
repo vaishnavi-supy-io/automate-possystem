@@ -730,7 +730,6 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
                 report_date = yesterday.strftime(fmt)
                 df[target] = report_date
             elif inject == "date_from_filename":
-                import re
                 match = re.search(r"(\d{4})(\d{2})(\d{2})", raw_path.name)
                 if match:
                     y, m, d = match.groups()
@@ -738,6 +737,15 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
                     df[target] = report_date
                 else:
                     df[target] = ""
+            elif inject == "business_dates_metadata":
+                # Filename encodes the run date (YYYYMMDDTHHMMSS); report covers the previous day
+                from datetime import timedelta
+                m = re.search(r"(\d{4})(\d{2})(\d{2})T", raw_path.name)
+                if m:
+                    y, mo, d = m.groups()
+                    run_date = datetime(int(y), int(mo), int(d))
+                    report_date = (run_date - timedelta(days=1)).strftime(fmt)
+                df[target] = report_date
             elif inject == "date_from_metadata":
                 preview = pd.read_csv(raw_path, header=None, nrows=10, on_bad_lines="skip")
                 raw_date_str = ""
@@ -1306,6 +1314,65 @@ def stage_email(
 
 
 # ──────────────────────────────────────────────────────────────────────────────
+# Resend Orchestrator
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _main_resend(args) -> int:
+    run_id = args.resend_run_id
+    print(f"\n[Sapapad Resend] run_id={run_id}\n")
+
+    raw_files = sorted(DOWNLOADS_DIR.glob(f"sapapad_*_{run_id}_raw.csv"))
+    if not raw_files:
+        print(f"[✗] No raw files found for run_id={run_id}", file=sys.stderr)
+        return 1
+
+    print(f"[Resend] Found {len(raw_files)} raw files to process\n")
+    failed = []
+
+    for raw_file in raw_files:
+        stem = raw_file.stem  # e.g. sapapad_BMD_Business_Bay_20260613T040308_cd6f98df_raw
+        # Strip leading "sapapad_" and trailing "_{run_id}_raw"
+        inner = stem.removeprefix("sapapad_")
+        suffix = f"_{run_id}_raw"
+        branch_slug = inner.removesuffix(suffix) if inner.endswith(suffix) else inner
+        branch_name = branch_slug.replace("_", " ")
+
+        print(f"{'─'*60}")
+        print(f"[Branch] {branch_name}")
+
+        try:
+            print(f"[Stage 3] Transforming...")
+            out_file, row_count, report_date = stage_transform(raw_file, branch_name=branch_name)
+            print(f"[Stage 3] ✓ {row_count} rows → {out_file.name}\n")
+
+            if row_count == 0:
+                print(f"  [!] 0 rows — skipping email.\n")
+                continue
+
+            print(f"[Stage 3.5] Verifying...")
+            vr = stage_verify(raw_file, out_file, page=None, branch_name=branch_name)
+
+            if not args.no_email:
+                print(f"[Stage 4] Sending email...")
+                stage_email(out_file, row_count, report_date, branch_name=branch_name, verification=vr)
+            else:
+                print(f"[Stage 4] Skipped (--no-email). File → {out_file}\n")
+
+        except (TransformError, EmailError) as exc:
+            print(f"[✗] {branch_name} failed: {exc}\n", file=sys.stderr)
+            failed.append(branch_name)
+
+    print(f"\n{'═'*60}")
+    print(f"[✓] Resend complete.  run_id={run_id}")
+    print(f"    Processed: {len(raw_files) - len(failed)}  Failed: {len(failed)}")
+    if failed:
+        print(f"    Failed branches: {failed}")
+    print(f"{'═'*60}\n")
+
+    return 1 if failed else 0
+
+
+# ──────────────────────────────────────────────────────────────────────────────
 # Per-Branch Orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
@@ -1439,10 +1506,15 @@ def main() -> int:
                         help="Run pipeline for each branch individually")
     parser.add_argument("--limit", type=int, default=0, metavar="N",
                         help="Process only the first N branches (for test runs)")
+    parser.add_argument("--resend-run-id", metavar="RUN_ID",
+                        help="Re-run transform+email for all raw files from a prior run (no browser needed)")
     args = parser.parse_args()
 
     _init_logger(verbose=args.debug)
     from_stage = args.from_stage
+
+    if args.resend_run_id:
+        return _main_resend(args)
 
     if args.per_branch:
         return _main_per_branch(args)
