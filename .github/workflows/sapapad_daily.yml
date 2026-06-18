@@ -29,15 +29,77 @@ jobs:
       - name: Install Playwright browsers
         run: playwright install chromium --with-deps
 
-      - name: Run Sapapad per-branch pipeline
+      - name: Run Sapapad per-branch pipeline (attempt 1)
+        id: attempt1
+        continue-on-error: true
         env:
-          SAPAPAD_USERNAME:        ${{ secrets.SAPAPAD_USERNAME }}
-          SAPAPAD_COMPANY:         ${{ secrets.SAPAPAD_COMPANY }}
-          SAPAPAD_PASSWORD:        ${{ secrets.SAPAPAD_PASSWORD }}
-          GMAIL_USER:              ${{ secrets.GMAIL_USER }}
-          GMAIL_APP_PASSWORD:      ${{ secrets.GMAIL_APP_PASSWORD }}
-          REPORT_RECIPIENT:        ${{ secrets.REPORT_RECIPIENT }}
+          SAPAPAD_USERNAME:    ${{ secrets.SAPAPAD_USERNAME }}
+          SAPAPAD_COMPANY:     ${{ secrets.SAPAPAD_COMPANY }}
+          SAPAPAD_PASSWORD:    ${{ secrets.SAPAPAD_PASSWORD }}
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:    ${{ secrets.REPORT_RECIPIENT }}
         run: python sapapad_automation.py --per-branch
+
+      - name: Retry — wait 2 minutes then try again
+        if: steps.attempt1.outcome == 'failure'
+        run: sleep 120
+
+      - name: Run Sapapad per-branch pipeline (attempt 2 — retry)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          SAPAPAD_USERNAME:    ${{ secrets.SAPAPAD_USERNAME }}
+          SAPAPAD_COMPANY:     ${{ secrets.SAPAPAD_COMPANY }}
+          SAPAPAD_PASSWORD:    ${{ secrets.SAPAPAD_PASSWORD }}
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:    ${{ secrets.REPORT_RECIPIENT }}
+        run: python sapapad_automation.py --per-branch --force-login
+
+      - name: Send failure alert email
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:          ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:    ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+
+          gmail_user     = os.environ["GMAIL_USER"]
+          gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+          recipient      = os.environ["REPORT_RECIPIENT"]
+          run_id         = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo           = os.environ.get("GITHUB_REPOSITORY", "")
+
+          subject = "⚠️ Sapapad POS Report FAILED — manual action needed"
+          body = f"""The daily Sapapad POS report pipeline failed after 2 attempts.
+
+          GitHub Actions run: https://github.com/{repo}/actions/runs/{run_id}
+
+          Please check the logs and re-run manually from the Actions tab,
+          or run locally: python sapapad_automation.py --per-branch
+
+          """
+
+          msg = MIMEText(body)
+          msg["Subject"] = subject
+          msg["From"]    = gmail_user
+          msg["To"]      = recipient
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+              s.login(gmail_user, gmail_password)
+              s.sendmail(gmail_user, recipient.split(","), msg.as_string())
+
+          print("Failure alert sent.")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1
 
       - name: Upload outputs as artifact (backup)
         if: always()
