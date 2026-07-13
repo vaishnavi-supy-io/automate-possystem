@@ -1,0 +1,319 @@
+# ============================================================
+# Talabat UAE Settlement Report — Supy POS Format Configuration
+# ============================================================
+# Edit this file to update column mapping or output format
+# WITHOUT touching any Python code.
+
+# -------------------------------------------------------
+# FILE STRUCTURE
+# Talabat exports come in two layouts we've seen so far:
+#   - Side-by-side: cols 1-11 are a summary/compensation/cancellation
+#     table, followed by the order detail data
+#   - Detail-only: the detail data starts right after a single blank column
+#
+# Rather than assume a fixed offset, the ingest step locates the detail
+# section by scanning the header row for detail_anchor_column and starting
+# from there — this works for either layout.
+#
+# detail_header_row: 0-indexed row that contains column names
+#   (Row 3 in Excel = index 2 in Python)
+# detail_anchor_column: header string marking the detail section's first column
+# -------------------------------------------------------
+file:
+  sheet_name: "Detailed Report"
+  detail_header_row: 2
+  detail_anchor_column: "Restaurant Id"
+
+# -------------------------------------------------------
+# ROW FILTER
+# Only rows whose Status matches keep_status are included.
+# "Charged Cancelled" orders (5 in the sample) are excluded.
+# -------------------------------------------------------
+filter:
+  status_column: "Status"
+  keep_status:
+    - "Successful"
+
+# -------------------------------------------------------
+# COLUMN MAPPING
+# raw    : exact header string from the Talabat .xlsx
+# target : output header for the final Supy .xlsx
+# dtype  : "str" | "int" | "float" | "date"
+# drop   : true → column exists in raw but is excluded
+# inject : "empty"      → column not in raw; write ""
+#          "constant_1" → column not in raw; write integer 1
+# -------------------------------------------------------
+columns:
+  # --- Mapped columns ---
+  - raw: "Order Id"
+    target: "Order ID"
+    dtype: str
+
+  - raw: "Date / Time"
+    target: "Sales Date *"
+    dtype: date
+
+  - raw: "Payment Method"
+    target: "Sales Type Code"
+    dtype: str
+
+  - raw: "Total Sale"
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  # Total sales excl. tax = Total Sale / 1.05  (UAE 5% VAT inclusive pricing)
+  # Derived in the transform; the raw SubTotal column is dropped below.
+
+  # Injected/derived columns
+  - raw: null
+    target: "Total sales excl. tax *"
+    dtype: float
+    inject: vat_excl_from_incl    # computed as Total sales incl. tax * / 1.05
+
+  - raw: "GEM Discount"
+    target: "Total Discount Value"
+    dtype: float
+
+  # --- Injected columns (not in raw file) ---
+  - raw: null
+    target: "POS Item ID *"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "POS Item Name"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sold QTY *"
+    dtype: int
+    inject: constant_1
+
+  # Status is used for filtering but excluded from output
+  - raw: "Status"
+    target: null
+    drop: true
+
+  # --- Dropped columns (present in raw, excluded from output) ---
+  - raw: "Restaurant Id"
+    target: null
+    drop: true
+
+  - raw: "Restaurant"
+    target: null
+    drop: true
+
+  - raw: "Branch Id"
+    target: null
+    drop: true
+
+  - raw: "Branch"
+    target: null
+    drop: true
+
+  - raw: "City / Area"
+    target: null
+    drop: true
+
+  - raw: "Service Type"
+    target: null
+    drop: true
+
+  - raw: "Is TPro"
+    target: null
+    drop: true
+
+  - raw: "VAT Type"
+    target: null
+    drop: true
+
+  - raw: "Delivery Charges Included in Commission"
+    target: null
+    drop: true
+
+  - raw: "SubTotal"
+    target: null
+    drop: true
+
+  - raw: "Item Level Order SubTotal"
+    target: null
+    drop: true
+
+  - raw: "Delivery Charges"
+    target: null
+    drop: true
+
+  - raw: "Service Fee"
+    target: null
+    drop: true
+
+  - raw: "Small Order Fee"
+    target: null
+    drop: true
+
+  - raw: "Cash On Delivery Fee"
+    target: null
+    drop: true
+
+  - raw: "Tax"
+    target: null
+    drop: true
+
+  - raw: "Original Amount"
+    target: null
+    drop: true
+
+  - raw: "Partial Refund Cost to Talabat"
+    target: null
+    drop: true
+
+  - raw: "Partial Refund owed by vendor (cash / pay@vendor)"
+    target: null
+    drop: true
+
+  - raw: "Partial Refund Reason"
+    target: null
+    drop: true
+
+  - raw: "GEM Base Amount"
+    target: null
+    drop: true
+
+  - raw: "Restaurant Coupon Discount"
+    target: null
+    drop: true
+
+  - raw: "Voucher Discount"
+    target: null
+    drop: true
+
+  - raw: "Item Discount"
+    target: null
+    drop: true
+
+  - raw: "Voucher Cost To Talabat"
+    target: null
+    drop: true
+
+  - raw: "Voucher Cost To Restaurant"
+    target: null
+    drop: true
+
+  - raw: "Voucher Due from Talabat"
+    target: null
+    drop: true
+
+  - raw: "Has Loyalty Voucher"
+    target: null
+    drop: true
+
+  - raw: "tPro cost covered by Talabat for discounted orders"
+    target: null
+    drop: true
+
+  - raw: "tPro cost co-funded by Talabat for all tPro orders"
+    target: null
+    drop: true
+
+  - raw: "Promotional Fees"
+    target: null
+    drop: true
+
+  - raw: "Promotional Fee Type"
+    target: null
+    drop: true
+
+  - raw: "Sponsored Deal Fees"
+    target: null
+    drop: true
+
+  - raw: "Sponsored Deal Fee Type"
+    target: null
+    drop: true
+
+  - raw: "Avoidable Wait Time Fee"
+    target: null
+    drop: true
+
+  - raw: "Avoidable Wait Time Fee VAT"
+    target: null
+    drop: true
+
+  - raw: "Payment Handling Charges"
+    target: null
+    drop: true
+
+  - raw: "Payment Handling Charges VAT"
+    target: null
+    drop: true
+
+  - raw: "Commissionable GMV"
+    target: null
+    drop: true
+
+  - raw: "Original Commissionable GMV"
+    target: null
+    drop: true
+
+  - raw: "Commission VAT Exclu."
+    target: null
+    drop: true
+
+  - raw: "Commission VAT"
+    target: null
+    drop: true
+
+  - raw: "Cost Per Order"
+    target: null
+    drop: true
+
+  - raw: "GEM Fee"
+    target: null
+    drop: true
+
+  - raw: "Loyalty Charges"
+    target: null
+    drop: true
+
+  - raw: "Loyalty Charges Type"
+    target: null
+    drop: true
+
+  - raw: "Net Payment Per Order"
+    target: null
+    drop: true
+
+# Final output column order (must list every non-dropped target column)
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+
+# Output date format — e.g. "01-May-2026"
+output_date_format: "%d-%b-%Y"
+
+# -------------------------------------------------------
+# EMAIL FETCH (Stage 0)
+# Inboxes to check for incoming FLARE Talabat reports.
+# user_env / password_env: names of env vars holding credentials.
+# An email matches if From contains sender_pattern OR
+# Subject contains subject_pattern (both case-insensitive).
+# The first unseen matching email with an .xlsx attachment is used.
+# -------------------------------------------------------
+email_fetch:
+  inboxes:
+    - user_env: TALABAT_INBOX_USER_1       # customercare@supy.io
+      password_env: TALABAT_INBOX_PASSWORD_1
+    - user_env: GMAIL_USER                 # vaishnavi@supy.io (reuses existing credentials)
+      password_env: GMAIL_APP_PASSWORD
+  search:
+    sender_pattern: "flare"
+    subject_pattern: "talabat"
+    attachment_ext: ".xlsx"
