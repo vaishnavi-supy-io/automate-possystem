@@ -30,6 +30,7 @@ Exit codes:
 
 import argparse
 import email as email_lib
+import email.utils
 import imaplib
 import json
 import os
@@ -137,12 +138,21 @@ def stage_fetch_from_email() -> Optional[pathlib.Path]:
     """
     t0 = time.monotonic()
 
-    fetch_cfg       = CONFIG.get("email_fetch", {})
-    inboxes         = fetch_cfg.get("inboxes", [])
-    search_cfg      = fetch_cfg.get("search", {})
-    sender_pattern  = search_cfg.get("sender_pattern", "flare").lower()
-    subject_pattern = search_cfg.get("subject_pattern", "talabat").lower()
-    attachment_ext  = search_cfg.get("attachment_ext", ".xlsx").lower()
+    fetch_cfg        = CONFIG.get("email_fetch", {})
+    inboxes          = fetch_cfg.get("inboxes", [])
+    search_cfg       = fetch_cfg.get("search", {})
+    sender_pattern   = search_cfg.get("sender_pattern", "flare").lower()
+    subject_pattern  = search_cfg.get("subject_pattern", "talabat").lower()
+    attachment_ext   = search_cfg.get("attachment_ext", ".xlsx").lower()
+    trusted_senders  = {s.lower() for s in search_cfg.get("trusted_senders", [])}
+    max_attach_bytes = int(search_cfg.get("max_attachment_bytes", 25 * 1024 * 1024))
+
+    if not trusted_senders:
+        raise FetchError(
+            "email_fetch.search.trusted_senders must list at least one exact "
+            "sender address in talabat_config.yaml — refusing to auto-ingest "
+            "from an unauthenticated sender."
+        )
 
     for inbox_cfg in inboxes:
         user_env     = inbox_cfg["user_env"]
@@ -177,11 +187,18 @@ def stage_fetch_from_email() -> Optional[pathlib.Path]:
                 hdr_bytes   = hdr_data[0][1]
                 hdr         = email_lib.message_from_bytes(hdr_bytes)
 
-                from_header    = hdr.get("From", "").lower()
+                # Authenticate the sender against an exact allow-list — the
+                # From header is attacker-controlled and trivially spoofable,
+                # so a loose substring match (e.g. "flare" anywhere in the
+                # display name) is not sufficient to trust the attachment.
+                _, from_addr = email_lib.utils.parseaddr(hdr.get("From", ""))
                 subject_header = hdr.get("Subject", "").lower()
 
-                # Must match sender OR subject pattern
-                if sender_pattern not in from_header and subject_pattern not in subject_header:
+                if from_addr.lower() not in trusted_senders:
+                    if _verbose:
+                        print(f"  [→] Rejected untrusted sender: {from_addr!r}")
+                    continue
+                if subject_pattern not in subject_header:
                     continue
 
                 # Full fetch only for confirmed matches
@@ -195,8 +212,17 @@ def stage_fetch_from_email() -> Optional[pathlib.Path]:
                     if not filename or not filename.lower().endswith(attachment_ext):
                         continue
 
+                    payload = part.get_payload(decode=True) or b""
+                    if len(payload) > max_attach_bytes:
+                        log("fetch", "download", "error", extra={
+                            "reason": "attachment exceeds max_attachment_bytes",
+                            "size": len(payload),
+                            "limit": max_attach_bytes,
+                        })
+                        continue
+
                     out_path = DOWNLOADS_DIR / f"{RUN_ID}_flare_raw.xlsx"
-                    out_path.write_bytes(part.get_payload(decode=True))
+                    out_path.write_bytes(payload)
 
                     # Mark email as read so it won't be re-processed tomorrow
                     mail.store(msg_id, "+FLAGS", "\\Seen")
@@ -435,6 +461,20 @@ def stage_transform(df: pd.DataFrame, source_filename: str) -> tuple:
         ordered     = [c for c in final_order if c in df.columns]
         extras      = [c for c in df.columns if c not in ordered]
         df = df[ordered + extras]
+
+        # ── 6b. Neutralize spreadsheet formula injection ──────────
+        # Values originate from an untrusted Talabat export (or an emailed
+        # attachment). A string starting with =, +, -, @, or tab/CR is
+        # interpreted as a formula by Excel/Sheets when the output file is
+        # opened downstream — prefix a single quote to force text interpretation.
+        _FORMULA_PREFIXES = ("=", "+", "-", "@", "\t", "\r")
+        for col in df.columns:
+            if df[col].dtype == object:
+                df[col] = df[col].map(
+                    lambda v: "'" + v
+                    if isinstance(v, str) and v.startswith(_FORMULA_PREFIXES)
+                    else v
+                )
 
         # ── 7. Build a date-range string for the filename/email ───
         date_col = "Sales Date *"

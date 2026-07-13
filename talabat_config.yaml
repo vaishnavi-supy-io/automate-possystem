@@ -303,9 +303,14 @@ output_date_format: "%d-%b-%Y"
 # EMAIL FETCH (Stage 0)
 # Inboxes to check for incoming FLARE Talabat reports.
 # user_env / password_env: names of env vars holding credentials.
-# An email matches if From contains sender_pattern OR
-# Subject contains subject_pattern (both case-insensitive).
-# The first unseen matching email with an .xlsx attachment is used.
+#
+# Authentication: an email is only trusted if its From address exactly
+# matches one of trusted_senders (case-insensitive) — the From header is
+# attacker-controlled and easily spoofed, so a loose substring match is not
+# sufficient on its own. sender_pattern is used only to narrow the
+# server-side IMAP search before the exact check runs. subject_pattern must
+# also match, as a secondary filter. The first unseen, trusted, matching
+# email with an .xlsx attachment under max_attachment_bytes is used.
 # -------------------------------------------------------
 email_fetch:
   inboxes:
@@ -317,3 +322,6 @@ email_fetch:
     sender_pattern: "flare"
     subject_pattern: "talabat"
     attachment_ext: ".xlsx"
+    trusted_senders:
+      - "accounting@eatflare.com"
+    max_attachment_bytes: 26214400   # 25 MB
