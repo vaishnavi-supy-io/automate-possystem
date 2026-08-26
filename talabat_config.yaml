@@ -314,7 +314,7 @@ output_date_format: "%d-%b-%Y"
 # -------------------------------------------------------
 email_fetch:
   inboxes:
-    - user_env: TALABAT_INBOX_USER_1       # customercare@supy.io
+    - user_env: TALABAT_INBOX_USER_1       # customer.care@supy.io
       password_env: TALABAT_INBOX_PASSWORD_1
     - user_env: GMAIL_USER                 # vaishnavi@supy.io (reuses existing credentials)
       password_env: GMAIL_APP_PASSWORD
