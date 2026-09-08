@@ -1,0 +1,154 @@
+# ============================================================
+# Ordit — per-order scraping
+# ============================================================
+# Manual process this replaces:
+#   Click Satay Street (top right) > Order History > Open each order
+#   > Copy Items ordered & prices
+#
+# ⚠️  ORDIT HAS TWO SIDES AND THE SALES DATA IS NOT ON app.ordit.co.uk.
+#     Investigated 2026-08-27 against the live account:
+#
+#       app.ordit.co.uk    BUYER side. /profile/orders/1 is "Order history"
+#                          for food this account ORDERED. It reads
+#                          "No recent orders" — permanently empty for us.
+#       admin.ordit.co.uk  VENDOR side ("Ordit Admin"). This is where Satay
+#                          Street's RECEIVED orders live. Restaurant id 1291.
+#
+#     The vendor portal is reached from the buyer profile via an "Admin portal"
+#     link whose href carries a single-use login token:
+#       https://admin.ordit.co.uk/login-token?token=<secret>
+#     The token is regenerated per page load, so it must be read from the live
+#     DOM at run time and never hard-coded or logged.
+#
+# ⚠️  There is also a REST API behind the vendor SPA (API Platform):
+#       https://coreapi.ordit.co.uk/api/v1/orders/v2?status=new&itemsPerPage=100
+#       https://coreapi.ordit.co.uk/api/v1/restaurants/1291
+#     Fetching it without the SPA's Authorization header returns 401. If that
+#     header can be captured, the API is a far better source than the DOM:
+#     it returns orders WITH line items in one call, and cannot break on a
+#     restyle. Worth doing before investing more in selectors.
+#
+# ⚠️  VOLUME IS LOW. July 2026: 7 orders, all £13.50-£14.95, mostly 1 item.
+#     1-27 August 2026: ZERO orders. An empty result is normal here and must
+#     not be treated as a failure.
+
+portal:
+  name: "Ordit"
+  # ordit.co.uk is the marketing site — /login there redirect-loops. The buyer
+  # app is app.ordit.co.uk; the VENDOR portal we actually need is admin.*.
+  base_url: "https://app.ordit.co.uk"
+  # ✅ CORRECTED 2026-09-01. This was app.ordit.co.uk/login — the BUYER login.
+  # Logging in there yields a buyer session and the marketplace listing page,
+  # not the vendor portal orders_url points at, so every run then timed out
+  # waiting for a login field on an already-logged-in buyer page. The vendor
+  # portal has its own login at admin.*, which is the one that matches
+  # orders_url and authenticated_element below.
+  login_url: "https://admin.ordit.co.uk/login"
+  # ✅ CONFIRMED 2026-08-27. Fixed history periods exist as path segments:
+  #   /orders/history/{today|yesterday|thisweek|lastweek|thismonth|lastmonth}
+  # but an ARBITRARY range is accepted as query params, which is what we want:
+  #   ?requiredDeliveryTime[after]=2026-08-01T00:00:00%2B01:00
+  #   &requiredDeliveryTime[before]=2026-08-27T23:59:59%2B01:00
+  #   &page=1&itemsPerPage=100
+  # Bare /orders/history (no period) returns 403, so a period is mandatory.
+  orders_url: "https://admin.ordit.co.uk/orders/history/lastmonth"
+  # ✅ CONFIRMED 2026-08-27 — the account email in the vendor portal header.
+  # Previously empty, which is why every run tried to log in even with a valid
+  # cached session, navigated to /login, was redirected to the logged-in
+  # marketplace, then timed out waiting for an email field that is not there.
+  authenticated_element: "text=info@sataystreet.co.uk"
+
+auth:
+  type: password
+  username_env: ORDIT_USERNAME
+  password_env: ORDIT_PASSWORD
+
+selectors:
+  # ✅ RE-CONFIRMED 2026-09-01 against admin.ordit.co.uk/login (form inspected,
+  # no login performed). Ordit is a Vuetify app: the ids are auto-generated
+  # (#input-76, #input-79) and shift whenever the form changes, so they are
+  # never targeted. The previous selectors matched on placeholder text, but
+  # this form carries NO placeholder attributes at all — only type and name —
+  # which is why the field was never found. name is stable; use it.
+  username_field: "input[name='email']"
+  password_field: "input[name='password']"
+  login_button: "button[type='submit']:has-text('Log in')"
+  login_error: ""                  # VERIFY — needs one failed login to observe
+  # The buyer marketplace shows a cookieconsent bar reading "I'm Ok with that";
+  # .cc-nb-okagree did not match it. Both are tried, plus the shared fallbacks
+  # in dismiss_cookie_banner().
+  cookie_accept: "button:has-text(\"I'm Ok with that\"), .cc-nb-okagree"
+
+  # Ordit nests the order history behind an account menu ("Satay Street",
+  # top right). If Order History is not reachable by URL, set these so the
+  # scraper can click through to it.
+  business_switcher: ""            # not needed — admin.* opens straight on orders
+  business_option_template: ""     # not needed
+
+  # ✅ CONFIRMED 2026-08-27 on admin.ordit.co.uk/orders/history/lastmonth.
+  # Ordit Admin is a Vuetify app. Unlike Feedr the class names are stable
+  # (no styled-components hash), so plain class selectors are safe.
+  # Row shape:
+  #   div.history-order
+  #     div.history-header
+  #       .text-h6.font-weight-bold      nth=0 "#JNZR"   nth=1 "£14.95"
+  #       .text-body-2.g-73--text        nth=0 "Nick Jones7 Jul 2026, 12:30"
+  #                                      nth=1 "1 item"
+  #     div.order-item-wrapper           <- line items, EMPTY until expanded
+  order_rows: "div.history-order"
+  order_link: ""                   # rows are NOT links — there is no detail page
+  order_reference: ".text-h6.font-weight-bold >> nth=0"
+  order_total: ".text-h6.font-weight-bold >> nth=1"
+  # Customer name and timestamp share one cell: "Nick Jones7 Jul 2026, 12:30".
+  # The date must be split off the trailing part, not parsed from the whole.
+  order_date: ".text-body-2.g-73--text >> nth=0"
+  status: ""                       # history list is already completed orders
+
+  # ⚠️  UNRESOLVED — the blocker for Ordit.
+  #     div.order-item-wrapper exists per row but is EMPTY in the DOM until the
+  #     row is expanded, and expansion could not be triggered: clicking
+  #     div.history-header times out (element never reports visible/stable) and
+  #     a JS .click() leaves the wrapper empty. The items are almost certainly
+  #     fetched on demand from coreapi.ordit.co.uk. Resolve via the API rather
+  #     than fighting the accordion — see the header note.
+  line_item_rows: ""               # BLOCKED — see above
+  # NOTE: a duplicated template block below this point used to re-declare
+  # order_link / order_date / status / line_item_rows as "", and YAML keeps
+  # the LAST key — which silently reset the discovered order_date selector
+  # to empty. Removed 2026-09-04. Do not re-add blank duplicates.
+  next_page: ""
+
+  order_id: ""                     # VERIFY
+  order_date_detail: ""
+  item_name: ""                    # VERIFY
+  item_qty: ""                     # VERIFY
+  item_unit_price: ""              # VERIFY
+
+filters:
+  keep_status: []
+
+pagination:
+  max_pages: 20
+
+dates:
+  list_format: ""
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: scraped
+  unit_price_is_per_item: true
+  tax_divisor: 1.2
+  # ⚠️  UNVERIFIED DIRECTION. price_includes_tax is not set, so the code
+  #     default (True) applies and prices are treated as GROSS -> divided by
+  #     1.2. Nobody has checked an Ordit order against its total to confirm
+  #     that. It matters: &Dine, the other B2B catering marketplace here,
+  #     shows prices EXCLUDING VAT (price_includes_tax: false, verified
+  #     against order SAT-IVB2M). If Ordit does the same, this divides a
+  #     net figure and understates both money columns.
+  #     To confirm: open one Ordit order and check whether the line prices
+  #     sum to the order total as-is (net) or already include VAT (gross).
+  price_includes_tax: true   # assumed — see the warning above
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

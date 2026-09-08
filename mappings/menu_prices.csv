@@ -1,0 +1,21 @@
+item_name,price_inc_tax
+# ============================================================
+# Menu pricing for portals that expose NO prices.
+# Used by: JustEat Business, HomeCook
+# Source: the "JustEat Business - Menu Pricing" tab.
+#
+# item_name     : must match the item name as it appears on the PORTAL,
+#                 not as it appears in Supy. Matching is case-insensitive
+#                 and collapses whitespace, but is otherwise exact.
+# price_inc_tax : unit price INCLUDING VAT, in GBP. The pipeline derives
+#                 the ex-VAT figure by dividing by 1.2.
+#
+# An order line whose item is missing from this file FAILS the run.
+# That is deliberate: an item silently priced at zero would flow into the
+# customer's inventory and corrupt their food-cost numbers.
+#
+# Replace the examples below with the real menu.
+# ============================================================
+Chicken Satay Skewers,7.50
+Pad Thai,9.00
+Thai Green Curry,9.50

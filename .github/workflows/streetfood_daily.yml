@@ -1,0 +1,172 @@
+name: Street Food Ltd Daily POS Report
+
+# Satay Street / Street Food Ltd — delivery-partner sales into Supy format.
+#
+# 04:00 UTC = 08:00 Dubai. The pipelines report YESTERDAY, and UK trading is
+# long closed by then.
+#
+# ONLY THE PARTNERS THAT CAN RUN IN A CLOUD RUNNER ARE LISTED:
+#   deliveroo  anddine  feedr  homecook
+#
+# Deliberately excluded, with reasons — do not "fix" by adding them:
+#   just_eat, justeat_business  need browser.cdp_endpoint, i.e. attaching to a
+#                               REAL Chrome that a human cleared Cloudflare in.
+#                               A GitHub runner has no such browser, so they
+#                               cannot run here at all. They are laptop-bound
+#                               until Just Eat's CSV Integration is in place.
+#   ordit                       authenticates, but its order detail never
+#                               renders under automation (verified headless
+#                               AND headed), so there is no item-level data to
+#                               collect.
+#   uber_eats                   no login or scrape selectors configured yet.
+#
+# homecook is included even though it currently stops at Stage 3 for want of
+# wholesale prices in mappings/menu_prices.csv — once those land it starts
+# producing without touching this file.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Sales date YYYY-MM-DD (blank = yesterday)"
+        required: false
+      only:
+        description: "Comma-separated partners (blank = the four below)"
+        required: false
+
+jobs:
+  run-pipelines:
+    name: Scrape, Transform & Email Street Food Ltd Reports
+    runs-on: ubuntu-22.04
+    timeout-minutes: 90        # feedr alone takes 5-11 minutes
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Create runtime directories
+        run: mkdir -p downloads output logs screenshots mappings state
+
+      - name: Run partner pipelines
+        id: attempt1
+        continue-on-error: true
+        env:
+          DELIVEROO_USERNAME: ${{ secrets.DELIVEROO_USERNAME }}
+          DELIVEROO_PASSWORD: ${{ secrets.DELIVEROO_PASSWORD }}
+          ANDDINE_USERNAME:   ${{ secrets.ANDDINE_USERNAME }}
+          ANDDINE_PASSWORD:   ${{ secrets.ANDDINE_PASSWORD }}
+          FEEDR_USERNAME:     ${{ secrets.FEEDR_USERNAME }}
+          FEEDR_PASSWORD:     ${{ secrets.FEEDR_PASSWORD }}
+          HOMECOOK_USERNAME:  ${{ secrets.HOMECOOK_USERNAME }}
+          HOMECOOK_PASSWORD:  ${{ secrets.HOMECOOK_PASSWORD }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          ONLY="${{ github.event.inputs.only }}"
+          ONLY="${ONLY:-deliveroo,anddine,feedr,homecook}"
+          DATE_ARG=""
+          if [ -n "${{ github.event.inputs.date }}" ]; then
+            DATE_ARG="--date ${{ github.event.inputs.date }}"
+          fi
+          python run_all_partners.py --only "$ONLY" $DATE_ARG \
+            --email-to vaishnavi@supy.io \
+            --email-to charlotte@supy.io \
+            --email-to customer.care@supy.io
+
+      - name: Retry once — wait 3 minutes
+        if: steps.attempt1.outcome == 'failure'
+        run: sleep 180
+
+      - name: Run partner pipelines (attempt 2 — fresh logins)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          DELIVEROO_USERNAME: ${{ secrets.DELIVEROO_USERNAME }}
+          DELIVEROO_PASSWORD: ${{ secrets.DELIVEROO_PASSWORD }}
+          ANDDINE_USERNAME:   ${{ secrets.ANDDINE_USERNAME }}
+          ANDDINE_PASSWORD:   ${{ secrets.ANDDINE_PASSWORD }}
+          FEEDR_USERNAME:     ${{ secrets.FEEDR_USERNAME }}
+          FEEDR_PASSWORD:     ${{ secrets.FEEDR_PASSWORD }}
+          HOMECOOK_USERNAME:  ${{ secrets.HOMECOOK_USERNAME }}
+          HOMECOOK_PASSWORD:  ${{ secrets.HOMECOOK_PASSWORD }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          ONLY="${{ github.event.inputs.only }}"
+          ONLY="${ONLY:-deliveroo,anddine,feedr,homecook}"
+          python run_all_partners.py --only "$ONLY" --force-login \
+            --email-to vaishnavi@supy.io \
+            --email-to charlotte@supy.io \
+            --email-to customer.care@supy.io
+
+      - name: Upload diagnostics on failure
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: streetfood-failure-diagnostics
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            logs/*.jsonl
+            screenshots/*.png
+            downloads/*_raw.csv
+
+      - name: Send failure alert email
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+        run: |
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+
+          gmail_user = os.environ["GMAIL_USER"]
+          gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+          recipients = ["vaishnavi@supy.io", "charlotte@supy.io"]
+          run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+
+          subject = "⚠️ Street Food Ltd POS report FAILED — upload by hand"
+          body = (
+              "The daily Street Food Ltd pipelines failed after 2 attempts.\n\n"
+              "Yesterday's delivery sales have NOT reached Supy. Check which\n"
+              "partners produced nothing and upload those by hand.\n\n"
+              "Run log, screenshots and raw CSVs are attached to the run as the\n"
+              '"streetfood-failure-diagnostics" artifact:\n'
+              f"  https://github.com/{repo}/actions/runs/{run_id}\n\n"
+              "Note: just_eat and justeat_business are NOT part of this job —\n"
+              "they need a real Chrome and only run from the laptop.\n"
+          )
+
+          msg = MIMEText(body)
+          msg["Subject"] = subject
+          msg["From"] = gmail_user
+          msg["To"] = ", ".join(recipients)
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+              server.login(gmail_user, gmail_password)
+              server.sendmail(gmail_user, recipients, msg.as_string())
+          print(f"Failure alert sent to {', '.join(recipients)}")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1

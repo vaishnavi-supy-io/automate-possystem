@@ -1,0 +1,149 @@
+# ============================================================
+# JustEat Business — per-order scraping, PRICES FROM LOOKUP
+# ============================================================
+# Manual process this replaces:
+#   Orders (top right) > Past > Open Order > Copy Items & Quantities.
+#   Refer to the "JustEat Business - Menu Pricing" tab for price info.
+#
+# ⚠️  This portal exposes NO prices. They are resolved from
+#     mappings/menu_prices.csv by item name. Any item missing from that
+#     sheet FAILS the run — an item silently priced at zero would flow
+#     straight into the customer's inventory.
+#
+# ✅ LOGIN FLOW FULLY MAPPED 2026-08-06. Cloudflare guards both hosts in the
+#    flow. Solved with a persistent browser profile: seed it once headed, and
+#    the stored clearance cookie lets later HEADLESS runs pass straight through
+#    (verified both ways).
+#
+#    Seed / re-seed the profile whenever Cloudflare invalidates it:
+#        python debug_selectors.py --partner justeat_business --profile --no-prompt
+
+portal:
+  name: "JustEat Business"
+  base_url: "https://app.business.just-eat.co.uk"
+  login_url: "https://app.business.just-eat.co.uk/login"
+  # ⚠️  WRONG — /orders/past returns "Page not found" and drops you on the
+  #     public marketing site. Verified 2026-09-01 by opening it with the
+  #     seeded profile. The real orders page is behind the ORDERS nav item on
+  #     the logged-in dashboard (seen in
+  #     screenshots/justeat_business_*_auth_01_login_page.png) but its URL has
+  #     not been captured yet: the login form does not render in a headless
+  #     context, so discovery needs a HEADED pass:
+  #         python debug_selectors.py --partner justeat_business --profile
+  #     Left as-is rather than guessed — a wrong orders_url scrapes nothing
+  #     and reports success.
+  # ✅ CORRECTED 2026-09-03 over a real Chrome (see browser.cdp_endpoint).
+  # /orders/past returned "Page not found" on the PUBLIC marketing site — it
+  # was never a vendor URL. The real list is the vendor Orders tab, and "Past"
+  # is a query param, so it is requested directly rather than clicked.
+  orders_url: "https://app.business.just-eat.co.uk/menus/vendor/orders?tab=Past&page=1"
+  # Present only when logged in: the vendor header's Orders nav item.
+  authenticated_element: "a[href*='/menus/vendor/orders']"
+
+auth:
+  type: password
+  username_env: JUSTEAT_BUSINESS_USERNAME
+  password_env: JUSTEAT_BUSINESS_PASSWORD
+
+# -------------------------------------------------------
+# BROWSER
+# This portal sits behind a Cloudflare bot challenge. A fresh browser context
+# gets challenged every run and fails; a persistent profile keeps the clearance
+# cookie so subsequent runs pass straight through.
+# -------------------------------------------------------
+browser:
+  # ✅ CDP DISABLED 2026-09-08 — this host is NOT Cloudflare-protected.
+  # Re-measured directly: a Playwright-launched persistent context reached
+  # app.business.just-eat.co.uk/menus/vendor/orders and was redirected to
+  # /login?forward=%2Flogin with NO challenge and NO "Just a moment" page.
+  # (partner-hub.just-eat.co.uk, a DIFFERENT host, DID serve "Performing
+  # security verification" in the same test — that one still needs CDP. The
+  # two hosts were previously assumed to share protection; they do not.)
+  #
+  # Attaching over CDP is also currently impossible on this machine:
+  # Playwright 1.59.0 + Chrome 152 fails connect_over_cdp with
+  # "Protocol error (Browser.setDownloadBehavior): Browser context management
+  # is not supported" — reproducible with a bare three-line connect, so it is
+  # environmental, not this repo's code.
+  #
+  # cdp_endpoint: "http://localhost:9222"   # re-enable only if a real challenge appears
+  persistent_profile: true
+  challenge_wait_seconds: 30
+
+selectors:
+  # ✅ CONFIRMED 2026-08-06 — Cloudflare cleared using a headed run with a
+  # persistent profile (see browser.persistent_profile below). No login attempted.
+  #
+  # TWO-STEP login, both steps confirmed by walking the real flow (no password
+  # submitted, nothing emailed):
+  #   1. app.business.just-eat.co.uk/login  → email only → "Log in with email"
+  #   2. redirects to id.business.just-eat.co.uk (Keycloak realm "jefb"), which
+  #      re-asks for username + password. This host has its OWN Cloudflare
+  #      challenge, which the engine waits out after step 1.
+  #
+  # It is NOT a magic-link flow — a real password step exists, so this partner
+  # can be fully automated.
+  username_field: "#email_rs"
+  username_submit_button: "button:has-text('Log in with email')"
+  username_field_step2: "#username"   # Keycloak re-asks; not always prefilled
+  password_field: "#password"
+  login_button: "#kc-login"
+  remember_me: "#rememberMe"          # longer session = fewer logins
+  login_error: ""                     # VERIFY — needs one failed login to observe
+  cookie_accept: "button:has-text('Accept all')"   # ✅ confirmed working
+
+  # ✅ ALL DERIVED 2026-09-03 from the live logged-in vendor Orders tab.
+  # The list is ag-Grid, which renders rows into THREE containers (pinned
+  # left, centre, pinned right): a bare "div.ag-row" matches 30 elements for
+  # 10 orders and most are empty shells. Scope to the centre container.
+  order_rows: ".ag-center-cols-container div.ag-row"
+  order_link: "a[href*='/menus/vendor/order/']"
+  # ag-Grid cells carry a stable col-id, so cells are addressed by that
+  # rather than by position. NOTE the date column mixes two formats:
+  #   "Yesterday"   relative -> handled by parse_date's relative resolver
+  #   "01/09/2026"  absolute -> dates.list_format below
+  order_date: "[col-id='pickupDate']"
+  status: "[col-id='status']"
+  order_total: "[col-id='totalAmountBeforePromoCode']"
+  order_reference: "[col-id='humanId']"
+  # ⚠️  Pagination is by URL (&page=N) and orders_url pins page=1, so only the
+  #     most recent 10 orders are read. Fine for a daily run; a backfill older
+  #     than ~10 orders needs page walking. next_page is left empty because
+  #     there is no in-page control to click.
+  next_page: ""
+
+  order_id: "[col-id='humanId']"   # "1058167"
+  order_date_detail: ""
+  # Detail page items live in the packing checklist. Use the OUTER container:
+  # .order-checklist-item__item also matches once per item, and the <table> on
+  # that page is a tax breakdown (Food & Extras / Delivery / Service /
+  # Sub-Total), NOT item lines.
+  line_item_rows: "div.order-checklist-item.row"
+  item_name: ".order-checklist-item__name"        # "Tofu Peanut Skewers"
+  item_qty: ".order-checklist-item__quantity"     # "1x" -> parsed to 1
+  item_unit_price: ""              # not present on this portal — leave blank
+
+filters:
+  # Only delivered orders are sales. The list also shows "Cancelled" rows,
+  # whose total renders "£--.--" and would parse to 0.
+  keep_status:
+    - "Delivered"
+
+pagination:
+  max_pages: 20
+
+dates:
+  # Absolute list dates read "01/09/2026". Relative ones ("Yesterday") are
+  # resolved before this format applies — see parse_date.
+  list_format: "%d/%m/%Y"
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: lookup                   # ← prices come from the menu sheet
+  lookup_csv: "mappings/justeat_business_prices.csv"
+  unit_price_is_per_item: true
+  tax_divisor: 1.2
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

@@ -1,0 +1,140 @@
+# ============================================================
+# Feedr — per-order scraping
+# ============================================================
+# Manual process this replaces:
+#   Orders > Completed orders > Open each order > Copy Item Name
+#   (in white) as both POS Item Code & POS Item Name.
+#   Unit Price is price inc tax. Apply formula for price exc tax (= price / 1.2).
+#
+# NOTE: "Item Name (in white)" — Feedr renders sub-items/modifiers in a
+# different colour. selectors.item_name must target ONLY the white top-level
+# item, or modifiers will be uploaded as separate sold items.
+#
+# ⚠️  Discover selectors:  python debug_selectors.py --partner feedr
+
+portal:
+  name: "Feedr"
+  base_url: "https://feedr.co"
+  login_url: "https://feedr.co/en-gb/authentication/login?destination=%2Fen-gb%2Fsupplier%2Forders%2Fupcoming"
+  orders_url: "https://feedr.co/en-gb/supplier/orders/completed"
+  authenticated_element: ""        # VERIFY
+
+auth:
+  type: password
+  username_env: FEEDR_USERNAME
+  password_env: FEEDR_PASSWORD
+
+selectors:
+  # ✅ CONFIRMED 2026-08-06 from the live login page (no login performed).
+  # Feedr's login is a Material-UI form with an extra Account selector: the
+  # submit button reads "Next", not "Login". If the account dropdown turns out
+  # to be a required third step, set account_select / account_option below.
+  # TWO-STEP: #password exists in the DOM from the start but is NOT visible —
+  # the email must be submitted with "Next" first. Both steps use the same
+  # "Next" button, so username_submit_button and login_button are identical.
+  # The submit button RELABELS between steps: "Next" on the email step, then
+  # "Login" once the password field is revealed. Using the same selector for
+  # both steps times out on step 2.
+  username_field: "#email"
+  username_submit_button: "button:has-text('Next')"
+  password_field: "#password"
+  login_button: "button:has-text('Login')"
+  login_error: ""                  # VERIFY — needs one failed login to observe
+  cookie_accept: "button[aria-label='Accept all cookies']"
+
+  # Account picker seen on the login form. Leave blank if login succeeds
+  # without touching it; otherwise fill both in.
+  account_select: ""               # VERIFY — "#account-select-autocomplete"
+  account_option: ""               # VERIFY — the Satay Street option
+
+  # ✅ ALL CONFIRMED 2026-08-06 against the live logged-in portal.
+  # Feedr is a styled-components SPA: class names carry a generated hash suffix
+  # (e.g. "SupplierOrderRow__Wrapper-sc-fe881acc-0 fciWfI") that changes on
+  # every deploy, so these match on the STABLE component-name prefix only.
+  order_rows: "div[class*='SupplierOrderRow__Wrapper']"
+  order_link: ""                   # rows have NO href — see orders.open_mode: click
+  order_date: ""                   # not on the row; comes from the day header
+  # Orders are grouped under one heading per day ("Friday 31 Jul").
+  order_group: "div[class*='style__Wrapper']"
+  order_date_group_title: "[class*='SupplierDayOrders__Title']"
+  status: ""                       # status text is inline in the row, not a cell
+  # Row cells are positional spans: nth=0 order type ("CC"), nth=1 meal
+  # ("Lunch"), nth=2 the reference. The reference drives the detail URL below.
+  order_reference: "[class*='SupplierCell__Span'] >> nth=2"
+  next_page: ""                    # no pager — the list is bounded by date range
+  # ⚠️  The Completed Orders page defaults to a 7-DAY window. Anything older is
+  #     simply absent from the DOM, so the scraper reads an empty list and
+  #     reports "no sales" — a confident, wrong answer. Widen it to 60 days
+  #     before collecting. Verified: orders from 31 Jul vanished from the
+  #     default view on 7 Aug.
+  list_pre_click: "button:has-text('60 days'), [role='button']:has-text('60 days')"
+
+  order_id: ""                     # falls back to the id in the detail URL
+  order_date_detail: ""
+  # The detail page is a grid "table"; cells are POSITIONAL, not named:
+  #   nth=0 qty | nth=1 item name | nth=2 allergens | nth=3 line total
+  # ">> nth=N" is Playwright selector syntax and works inside a row scope.
+  # ⚠️  MUST exclude the OrderTotals table. The detail page renders TWO tables
+  #     with the same row class; the second is a totals footer whose cells are
+  #     (items subtotal, fee, net, delivery, order total). Matched naively it
+  #     becomes a bogus 20th "item" — qty 246, name "£4.50" — and inflates the
+  #     upload by the delivery charge. Verified: 20 rows unscoped, 19 scoped.
+  line_item_rows: "[class*='Table__StyledTable']:not(:has([class*='OrderTotals'])) [class*='Table__TableRow']"
+  item_qty: "[class*='Table__TableValue'] >> nth=0"
+  item_name: "[class*='Table__TableValue'] >> nth=1"
+  item_unit_price: "[class*='Table__TableValue'] >> nth=3"
+
+filters:
+  # The Completed Orders page only lists completed orders, and the row has no
+  # dedicated status cell, so no status filtering is applied here. The date
+  # range does the real filtering.
+  keep_status: []
+
+# -------------------------------------------------------
+# ORDER LIST BEHAVIOUR
+# Feedr's rows are click-to-open SPA rows with no href, so the scraper has to
+# return to the list and click a row by position for each order.
+# -------------------------------------------------------
+orders:
+  open_mode: click
+  # Click-mode costs TWO page loads per order (reload the list, re-apply the
+  # 60-day widening, then click). On a portal this slow that is minutes per run.
+  # Detail URLs are constructible from the row reference, so navigate directly:
+  #   GRNLBS-GRNLB-699953  →  /en-gb/supplier/ccorder/699953?from=completed
+  # If a non-CC order type ever appears the URL 404s, and that order is reported
+  # as skipped rather than silently dropped.
+  detail_url_template: "/en-gb/supplier/ccorder/{order_num}?from=completed"
+  detail_id_pattern: "(\\d+)$"
+
+# -------------------------------------------------------
+# BROWSER
+# Feedr is genuinely slow — login alone takes ~95s — and its GTM/chat widget
+# keeps network activity alive so "networkidle" never settles.
+# -------------------------------------------------------
+browser:
+  nav_timeout_seconds: 90
+
+pagination:
+  max_pages: 1                     # single scrolling list, no pager
+
+dates:
+  list_format: ""
+  # Day headers read "Friday 31 Jul" — no year. pandas infers the current year,
+  # which is correct except across a New Year boundary.
+  group_format: ""
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: scraped
+  # ⚠️  The price cell is the LINE TOTAL, not a unit price. Verified: a row with
+  #     qty 8 shows £59.76 (= 8 × £7.47). Treating it as per-unit would multiply
+  #     that line by 8.
+  unit_price_is_per_item: false
+  # Feedr displays VAT-INCLUSIVE prices (per the documented manual process:
+  # "Unit Price is price inc tax, apply price / 1.2"). Opposite of &Dine.
+  price_includes_tax: true
+  tax_divisor: 1.2
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

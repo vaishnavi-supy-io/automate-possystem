@@ -1,0 +1,168 @@
+# ============================================================
+# Just Eat Partner Hub — per-order scraping
+# ============================================================
+# Manual process this replaces:
+#   Select the Business ID > Management > History > Apply Date Range
+#   > Click an order number > Copy Name as both POS Item Code &
+#   POS Item Name. Pcs is qty, Unit Price is price inc tax.
+#   Apply formula for price exc tax (= price / 1.2).
+#   Switch business then repeat.
+#
+# ⚠️  selectors.* are unset — discover them once with:
+#       python debug_selectors.py --partner just_eat
+#     then step through the flow headed:
+#       python partner_scraper.py --partner just_eat --debug
+
+portal:
+  name: "Just Eat"
+  base_url: "https://partner-hub.just-eat.co.uk"
+  # NOT /login — that path 404s. Hitting /home while unauthenticated redirects
+  # to Just Eat's Keycloak SSO at access.just-eat.co.uk, which is where the
+  # real form lives. The engine waits for the redirect to settle.
+  login_url: "https://partner-hub.just-eat.co.uk/home"
+  orders_url: "https://partner-hub.just-eat.co.uk/management/history"   # VERIFY
+  authenticated_element: ""        # VERIFY — element present only when logged in
+  # NOTE 2026-09-01: this portal serves an INTERACTIVE Cloudflare challenge
+  # ("Verify you are human" checkbox), which no headless run can clear. See
+  # browser.persistent_profile below — the profile must be seeded once headed.
+
+auth:
+  type: password
+  username_env: JUST_EAT_USERNAME
+  password_env: JUST_EAT_PASSWORD
+
+# -------------------------------------------------------
+# BUSINESSES — one login, two businesses, two Supy entities.
+# This is the only partner where destination varies per business.
+# -------------------------------------------------------
+# -------------------------------------------------------
+# BROWSER
+# Added 2026-09-01. partner-hub.just-eat.co.uk serves an INTERACTIVE Cloudflare
+# challenge — a "Verify you are human" checkbox, captured in
+# screenshots/just_eat_*_auth_01_bot_challenge.png. No headless run can tick
+# it, so every run died with "a bot challenge did not clear within 30s".
+#
+# The fix is the same one JustEat Business already uses: a persistent profile
+# that keeps the clearance cookie between runs. IT MUST BE SEEDED ONCE, HEADED,
+# BY A HUMAN — tick the checkbox yourself and the profile carries it forward:
+#
+#     python debug_selectors.py --partner just_eat --profile
+#
+# Until that is done this partner will still fail, and its sales need uploading
+# by hand. Cloudflare re-challenges periodically, so expect to re-seed.
+# -------------------------------------------------------
+browser:
+  # ATTACH to a real Chrome instead of launching one. Cloudflare blocks every
+  # Playwright-launched browser on this host — measured 2026-09-02:
+  #   headless + saved storage_state  -> held at the challenge
+  #   headless + persistent profile   -> 90s, never cleared
+  #   HEADED   + persistent profile   -> 60s, never cleared
+  # It never even offers the checkbox, so "have a human tick it once" does not
+  # work either. Attaching to a Chrome the user logged into does, because the
+  # fingerprint is genuine and the clearance cookie is already set.
+  #
+  # ⚠️  PARTIAL FINDING 2026-09-08 — flags matter, but they are NOT sufficient.
+  #
+  # Suppressing Playwright's automation flags is NECESSARY. With a valid
+  # clearance cookie already in the profile, measured on this host:
+  #
+  #   launch_persistent_context, default flags -> "Performing security verification"
+  #   same + ignore --enable-automation
+  #        + --disable-blink-features=AutomationControlled
+  #        + channel=chrome, no UA override    -> PASSED, title "Partner Hub",
+  #                                               navigator.webdriver == False
+  #
+  # The UA override mattered too: pinning "Chrome/121" onto a Chrome 152 binary
+  # is itself a mismatch, so it is skipped whenever these flags are suppressed.
+  #
+  # BUT the cookie is doing at least half the work, and NOT all cookies are
+  # equal. Also measured the same day:
+  #   * The PASS above used a cookie seeded by a HUMAN browsing session (09-03).
+  #   * A plain Chrome left on the site for 45s DOES get a cf_clearance
+  #     passively (expiry a year out) — but a Playwright launch reusing that
+  #     fresh cookie was challenged again. Passive clearance does not transfer.
+  #   * With no cookie at all, the challenge does NOT self-clear: polled every
+  #     10s for 2 minutes, still blocked, and there is NOTHING to click —
+  #     no checkbox, no Turnstile iframe, no #challenge-stage. It is a silent
+  #     fingerprint block, so "have a human tick it" is not the answer either.
+  #
+  # NOTE: repeated automated attempts from one profile/IP probably raise
+  # Cloudflare's scrutiny. If this starts failing where it once passed, back
+  # off for a while rather than retrying in a loop.
+  #
+  # STATE: this partner is NOT working. The profile below needs a genuine human
+  # browsing session on partner-hub.just-eat.co.uk to re-seed clearance, after
+  # which the flag-suppressed launch is the route that has worked.
+  #
+  # CDP is also broken outright on this machine — Playwright 1.59.0 against
+  # Chrome 152 fails every connect_over_cdp with "Protocol error
+  # (Browser.setDownloadBehavior): Browser context management is not
+  # supported", reproducible with a bare three-line connect. The old route
+  # could not be used even if it were still wanted.
+  #
+  # cdp_endpoint: "http://localhost:9222"
+  persistent_profile: true
+  suppress_automation_flags: true
+  # The profile a human already cleared Cloudflare and logged in with. It sits
+  # outside state/ because ./start_chrome_cdp.sh seeded it there.
+  profile_dir: "~/.chrome-partner-hub"
+  challenge_wait_seconds: 30
+
+businesses:
+  - id: "153849"
+    name: "Satay Street"
+    destination: "Street Food Ltd."
+  - id: "282355"
+    name: "Satay Street"
+    destination: "Thai Street Boxpark"
+
+selectors:
+  # ── Login (Keycloak SSO — access.just-eat.co.uk) ───────
+  # ✅ CONFIRMED 2026-08-06 from the live SSO page (no login performed).
+  # These are standard Keycloak IDs and are stable across Just Eat deploys.
+  username_field: "#username"
+  password_field: "#password"
+  login_button: "#kc-login"
+  login_error: ""                  # VERIFY — Keycloak usually renders "#input-error"
+  cookie_accept: ""                # consent shown as OK/Essential buttons; usually
+                                   # not blocking on the SSO host
+
+  # ── Business switcher ──────────────────────────────────
+  # business_option_template may use {id} and {name}.
+  business_switcher: ""            # VERIFY
+  business_option_template: ""     # VERIFY — e.g. "[data-business-id='{id}']"
+
+  # ── Order list (Management > History) ──────────────────
+  order_rows: ""                   # VERIFY — one element per order row
+  order_link: ""                   # VERIFY — the order-number link within a row
+  order_date: ""                   # VERIFY — date cell within a row
+  status: ""                       # VERIFY — status cell within a row (optional)
+  next_page: ""                    # VERIFY — pagination control (optional)
+
+  # ── Order detail ───────────────────────────────────────
+  order_id: ""                     # VERIFY — falls back to the URL slug if unset
+  order_date_detail: ""            # only needed if the list shows no date
+  line_item_rows: ""               # VERIFY — one element per line item
+  item_name: ""                    # VERIFY — "Name" column
+  item_qty: ""                     # VERIFY — "Pcs" column
+  item_unit_price: ""              # VERIFY — "Unit Price" column (inc. tax)
+
+filters:
+  # Empty list → accept every order. Fill in once the real status
+  # values are known, so refunds/cancellations are excluded.
+  keep_status: []
+
+pagination:
+  max_pages: 20
+
+dates:
+  list_format: ""                  # VERIFY — e.g. "%d/%m/%Y"; blank → best-effort parse
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: scraped                  # Unit Price is on the order page
+  unit_price_is_per_item: true     # line total = unit price × qty
+  tax_divisor: 1.2                 # excl. tax = incl. tax / 1.2
+
+output_date_format: "%d-%b-%Y"

@@ -1,0 +1,372 @@
+# ============================================================
+# Deliveroo Partner Hub — Items Sold Report → Supy POS Format
+# ============================================================
+# Client: Street Food Ltd. (Satay Street)
+#
+# Edit this file to update selectors, sites, or column mapping
+# WITHOUT touching any Python code.
+#
+# ⚠️  FIRST-RUN SETUP — two things must be filled in by hand:
+#   1. selectors.*        → run `python debug_selectors.py --portal deliveroo`
+#   2. columns[].raw      → run the pipeline once with --discover-columns
+# Both are marked "VERIFY" below. The pipeline fails loudly with a
+# helpful message rather than guessing.
+
+portal:
+  name: "Deliveroo"
+  login_url: "https://partner-hub.deliveroo.com/login"
+  # Analytics landing page. org_id / branch_id are substituted at runtime.
+  reports_url: "https://partner-hub.deliveroo.com/analytics?orgId={org_id}&dateRangePreset=last_7_days&branchId={branch_id}"
+  org_id: "47196"
+  branch_id: "75774"
+  # Element that only exists when authenticated — used to validate the
+  # cached session without a full re-login. Leave "" to always re-login.
+  # ✅ CONFIRMED 2026-08-27 — the site switcher in the header, present only
+  # when logged in. An expired session redirects to /login?redirect=…, which is
+  # how a stale storage_state.json shows up.
+  authenticated_element: "button:has-text('Satay Street - Aldgate')"
+
+# -------------------------------------------------------
+# SITES
+# The report wizard asks which sites to include. Only the
+# sites listed here are ticked.
+#
+# label : visible text of the site's checkbox row in the wizard
+# -------------------------------------------------------
+# ⚠️  THE ACCOUNT HAS TWO SITES. Confirmed 2026-08-27 from the live wizard's
+#     site list ("0/2 sites selected"):
+#         Satay Street - Aldgate
+#         Satay Street - Kentish Town
+#
+#     BOTH are now collected (enabled 2026-09-01 on the team's instruction to
+#     process every site). Note what this overrides: the documented manual
+#     process says "Only select the Aldgate site", and the earlier note here
+#     asked for client confirmation before adding Kentish Town. That
+#     confirmation is still worth getting on the record — if Kentish Town is
+#     genuinely out of scope for Supy, comment it out again rather than
+#     leaving its sales to be reconciled later.
+#
+# Labels are matched against the visible row text, so they must be exact.
+sites:
+  - label: "Satay Street - Aldgate"          # ✅ CONFIRMED 2026-08-27
+  - label: "Satay Street - Kentish Town"     # enabled 2026-09-01 (was out of scope)
+
+# -------------------------------------------------------
+# LOGIN FIELD SELECTORS
+# Credentials come from .env (DELIVEROO_USERNAME / DELIVEROO_PASSWORD)
+# and are NEVER stored in this file.
+# -------------------------------------------------------
+selectors:
+  # ✅ CONFIRMED 2026-08-06 by inspecting the live login page (no login performed).
+  # Deliveroo uses hash-suffixed CSS classes that change on every deploy, so
+  # these target the placeholder text instead — stable across rebuilds.
+  username_field: "input[placeholder='e.g. Joe.Bloggs@deliveroo.com']"
+  password_field: "input[placeholder='e.g. ********']"
+  login_button: "button[aria-label='Log in']"
+  login_error: ""                # VERIFY — needs one failed login to observe
+
+  # OneTrust consent overlay — intercepts the Log in click if left up.
+  cookie_accept: "#onetrust-accept-btn-handler"
+  # The "Partner Hub app" promo is a ReactModalPortal (tcl__Modal) that covers
+  # the page and swallows clicks. Confirmed 2026-09-02 from a live wizard run:
+  # every click retried until timeout with "<div class=tcl__Modal…> intercepts
+  # pointer events". It reappears after navigation, so it is cleared before
+  # each wizard step, not once at login.
+  # Third-party widgets that cover the wizard and swallow clicks. These are
+  # BLOCKED AT THE NETWORK LAYER rather than clicked away, because a survey
+  # iframe cannot be reliably dismissed from the parent page and reappears.
+  # Confirmed 2026-09-02: a Medallia "Feedback Survey" iframe
+  # (embeddedIframe17225, resources.digital-cloud.medallia.eu) intercepted
+  # every click on the date step until the run timed out. Nothing here is
+  # required to render sales data.
+  blocked_url_patterns:
+    - "**medallia**"
+    - "**digital-cloud.medallia.eu**"
+
+  # Promo modals are removed from the DOM if they are still intercepting after
+  # a dismiss click. Matched on their COPY so the wizard's own dialogs — which
+  # are also ReactModalPortal/tcl__Modal nodes — are never removed.
+  # Seen 2026-09-02: "Give your business a boost with funding" (buttons:
+  # close / Discover more / Maybe later) and the "Partner Hub app" promo. They
+  # appear ASYNCHRONOUSLY, after the page settles, so clearing once before a
+  # step is not enough — they pop up mid-step and swallow the click.
+  promo_text_markers:
+    - "maybe later"
+    - "discover more"
+    - "partner hub app"
+    - "give your business a boost"
+
+  promo_dismiss: "button:has-text('Maybe later'), button:has-text('No thanks'), [aria-label='Close'], button[aria-label='close']"
+
+  # ── Report wizard ──────────────────────────────────────
+  # Reports > Create Items Sold Report > Time Period: Custom
+  #   > Continue > tick site(s) > create > wait > download
+  # ✅ ALL CONFIRMED 2026-08-27 by walking the live wizard end to end.
+  # Partner Hub is a React app whose CSS classes carry a hash suffix that
+  # changes on every deploy (tcl__TableRow-188f4a81), so every selector below
+  # matches on the STABLE component-name prefix or on visible text.
+  #
+  # ⚠️  TWO MODALS INTERCEPT CLICKS AND MUST BE CLEARED FIRST, or every click
+  #     fails with "<div class=tcl__Modal…> intercepts pointer events":
+  #       1. OneTrust cookie banner  → #onetrust-accept-btn-handler
+  #       2. "Partner Hub app" promo → button:has-text('Maybe later')
+  #     Both reappear after navigation, so clear them again after each step.
+  reports_tab: "button:has-text('Reports')"
+  # The report type is chosen by WHICH create button you press — there is no
+  # separate type picker, so report_type_items_sold is not needed.
+  create_report_button: "button:has-text('Create Items sold report')"
+  report_type_items_sold: ""     # not applicable — see above
+
+  # Step 1 "Dates". The period control is a readonly input that opens a list of
+  # exactly two options: "Last week" and "Custom".
+  time_period_toggle: "input#time_period"
+  time_period_custom: "div[class*='tcl__Option']"   # match on exact text "Custom"
+
+  # Choosing Custom reveals two date inputs. They are react-dates
+  # (airbnb) controlled inputs — .fill() TIMES OUT, the value cannot be typed.
+  # Dates must be picked by clicking a day cell in the calendar.
+  date_from_field: "input[placeholder='Select date'] >> nth=0"
+  date_to_field: "input[placeholder='Select date'] >> nth=1"
+  # Day cells carry an aria-label in this exact shape:
+  #   "Wednesday, August 12, 2026"      (weekday, month name, no zero padding)
+  # Displayed input value is a different format again: "26 Aug 2026".
+  calendar_day_cell: "td[class*='CalendarDay']"
+  # ✅ VERIFIED 2026-09-02 against a live wizard run: cells render as
+  #   <td role="button" aria-label="Saturday, August 1, 2026" class="CalendarDay …">
+  # The label is matched as a SUFFIX because a state prefix ("Selected. ",
+  # "Not available. ") is prepended as the picker is used.
+  calendar_day_aria_format: "%A, %B {day}, %Y"      # {day} unpadded
+  # Month caption, read to decide which way to page the picker.
+  calendar_month_caption: "[class*='CalendarMonth_caption']"
+  # The calendar opens on the current month, so a backfill has to page the
+  # month view until the target day is on screen. These are the react-dates
+  # defaults plus loose fallbacks; ⚠️ UNVERIFIED against the live wizard. If
+  # both miss, _pick_date raises and prints every aria-label it could see, so
+  # one run is enough to correct them.
+  # ✅ VERIFIED 2026-09-02 — note the TRAILING FULL STOP, which an exact
+  # match without it would miss.
+  calendar_month_next: "[aria-label='Move forward to switch to the next month.'], [aria-label*='next month' i]"
+  calendar_month_prev: "[aria-label='Move backward to switch to the previous month.'], [aria-label*='previous month' i]"
+  # How many months the picker may be paged before giving up.
+  calendar_month_nav_limit: 18
+
+  continue_button: "button[aria-label='Continue']"
+
+  # Step 2 "Sites". Rows are a tcl table, not <label>/<tr>, so the checkbox has
+  # to be reached through the row that carries the site's visible text.
+  site_checkbox_template: "div[class*='tcl__TableRow']:has-text('{label}') input[type=checkbox]"
+  select_all_sites: "text=Select all sites"
+  submit_report_button: "button:has-text('Create report')"
+
+  # ── Generated-reports list (bottom of the page) ─────────
+  # Deliveroo generates the report asynchronously: a row appears in a
+  # list and its download link only becomes active once ready.
+  # ✅ DERIVED 2026-09-02 from the live logged-in Reports tab (read-only; no
+  # report created). Reaching it: /analytics → dismiss OneTrust + "Maybe
+  # later" → click the Reports tab, which routes to /reporting-platform.
+  # Navigating straight to /reporting-platform renders NOTHING — the list only
+  # appears via that in-app tab click, so the goto→click order matters.
+  # 7 existing report rows were present, each with a Download link whose href
+  # is a direct API URL: /api/reporting_platform/reports/<uuid>/download
+  report_rows: "div[class*='tcl__TableRow']"
+  report_row_ready_link: "a:has-text('Download')"
+
+# -------------------------------------------------------
+# REPORT RETRIEVAL — via Partner Hub's own JSON API
+#
+# The generated-reports list is driven by POST /reports/search, which the page
+# itself calls on load. Discovered 2026-09-02 by capturing the app's traffic.
+# Polling that instead of the DOM removes every fragile step at once: no row
+# index to guess, no promo modal to fight, no re-entering the Reports tab just
+# to make the list render.
+#
+# Request body (replayed verbatim from the page's own call, so the restaurant
+# ids never have to be hardcoded):
+#   {"restaurant_drn_ids":[...],"starting_after":0,"limit":"10"}
+# Each report carries: drn_id, status ("available" | generating), report_type
+# ("items_sold"), start_date, end_date, requested_at.
+# The file is then fetched from the download path below.
+# -------------------------------------------------------
+api:
+  # The search body is BUILT from these ids rather than captured from the
+  # page. Capturing was tried first and proved unreliable — the page-level
+  # request listener did not see the POST, so the poll had nothing to replay
+  # and timed out twice while the report itself sat there "available".
+  #
+  # These are Street Food Ltd.'s two Deliveroo sites, taken from the app's own
+  # reports/search call on 2026-09-02 (order matches deliveroo_config sites:
+  # Aldgate, Kentish Town). To re-discover after a site is added or removed:
+  # open the Reports tab with devtools and read the POST body of
+  # /api/reporting_platform/reports/search.
+  restaurant_drn_ids:
+    - "7a93ab08-be02-4111-89ea-2f58f337d272"
+    - "9cf40686-3c2a-4cfa-8de9-f36d8f1b0398"
+  search_limit: "25"
+  search_path: "/api/reporting_platform/reports/search"
+  download_path: "/api/reporting_platform/reports/{drn_id}/download"
+  report_type: "items_sold"
+  ready_status: "available"
+
+# -------------------------------------------------------
+# ASYNC REPORT GENERATION
+# How long to wait for Deliveroo to finish building the report.
+# -------------------------------------------------------
+report_generation:
+  poll_interval_seconds: 10
+  timeout_seconds: 600           # 10 minutes
+  # Row index to download: 0 = topmost (newest) row in the list.
+  download_row_index: 0
+
+# -------------------------------------------------------
+# DATE HANDLING
+# The wizard's date inputs expect this format.
+# -------------------------------------------------------
+dates:
+  # OBSOLETE 2026-09-02 — nothing is typed into the wizard's date fields any
+  # more; they are react-dates inputs and .fill() times out, so dates are
+  # clicked from the calendar via selectors.calendar_day_aria_format. Kept so
+  # older configs still load.
+  input_format: "%d/%m/%Y"
+  # Default range when no CLI dates are given: yesterday only.
+  default_lookback_days: 1
+
+# -------------------------------------------------------
+# TAX
+# Deliveroo reports UK gross (VAT-inclusive) figures.
+# excl. tax = incl. tax / tax_divisor
+# -------------------------------------------------------
+tax:
+  divisor: 1.2
+
+# -------------------------------------------------------
+# FILE STRUCTURE of the downloaded report
+# header_row: 0-indexed row containing the column names.
+#   Set to null to auto-detect by scanning for header_anchor_column.
+# -------------------------------------------------------
+file:
+  sheet_name: null               # null → first sheet
+  header_row: null               # null → auto-detect
+  # ✅ CONFIRMED 2026-08-27 from a real download.
+  # The export is a CSV (not .xlsx) named
+  #   rs-items_sold-report_12-08-2026_26-08-2026.csv
+  # with a single header row and these six columns, in this order:
+  #   Restaurant name, Category, Item name, Quantity, Price, Subtotal
+  header_anchor_column: "Item name"
+
+# -------------------------------------------------------
+# COLUMN MAPPING
+# raw    : exact header string from the Deliveroo export        ← VERIFY ALL
+# target : output header for the final Supy .xlsx
+# dtype  : "str" | "int" | "float" | "date"
+# drop   : true → column exists in raw but is excluded
+# inject : column not present in raw:
+#          "empty"                → write ""
+#          "constant_1"           → write integer 1
+#          "run_date_range"       → write the report's date range start
+#          "copy:<target>"        → copy the value of another target column
+#          "derive_excl_tax:<target>" → <target> / tax.divisor
+# -------------------------------------------------------
+columns:
+  # --- Mapped from the raw export ---
+  - raw: "Item name"             # ✅ CONFIRMED 2026-08-27
+    target: "POS Item Name"
+    dtype: str
+
+  # ✅ CONFIRMED — a TRUE unit count, not an order count. This report does not
+  # share the Black Bear Burger problem where the only metric available is
+  # "Count Orders (incl Undelivered)" and 3 items on one order read as 1.
+  - raw: "Quantity"              # ✅ CONFIRMED 2026-08-27
+    target: "Sold QTY *"
+    dtype: int
+
+  # Subtotal = Quantity x Price (verified: 2 x 13.95 = 27.90).
+  # "Price" is the per-unit price; do NOT map it to a total.
+  - raw: "Subtotal"              # ✅ CONFIRMED 2026-08-27
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  # "Restaurant name" and "Category" are present but not part of the Supy
+  # contract. Restaurant name is a useful cross-check that the site filter
+  # worked; Category is Deliveroo's menu section ("Main Dishes Rice",
+  # "Modifiers", "Drinks").
+  - raw: "Restaurant name"
+    target: null
+    dtype: str
+    drop: true
+
+  - raw: "Category"
+    target: null
+    dtype: str
+    drop: true
+
+  # --- Injected ---
+  # Deliveroo's Items Sold report has no stable item code, so the item
+  # name doubles as the POS Item ID (same convention as Feedr / Just Eat).
+  - raw: null
+    target: "POS Item ID *"
+    dtype: str
+    inject: "copy:POS Item Name"
+
+  - raw: null
+    target: "Total sales excl. tax *"
+    dtype: float
+    inject: "derive_excl_tax:Total sales incl. tax *"
+
+  # ⚠️  THE EXPORT HAS NO DATE COLUMN. Confirmed 2026-08-27: a 12-26 Aug
+  #     report returns ONE aggregated row per item for the whole 15-day span.
+  #     Supy needs a sales date per row, so daily granularity requires ONE
+  #     REPORT PER DAY (from == to). run_date_range stamps the range start,
+  #     which is only correct when the range is a single day.
+  #     Requesting a multi-day range and stamping it with the start date would
+  #     silently attribute two weeks of sales to one day.
+  - raw: null
+    target: "Sales Date *"
+    dtype: date
+    inject: run_date_range
+
+  - raw: null
+    target: "Total Discount Value"
+    dtype: float
+    # 0, not blank — matches the Dines config, whose note reads "spec says
+    # Discount = 0, not blank". The Items Sold report carries no discount
+    # breakdown, so zero is the honest value and an empty cell risks the
+    # Supy importer rejecting the row.
+    inject: zero
+
+  # Items Sold is an aggregate report — there is no per-order granularity.
+  - raw: null
+    target: "Order ID"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sales Type Code"
+    dtype: str
+    inject: empty
+
+# Final output column order — matches the Supy upload template
+# (identical to the Oracle BI pipeline's output).
+# Columns produced by the transform but absent from output_column_order are
+# dropped from the upload file (they are still named in the run log). Set true
+# only if a downstream consumer needs Deliveroo's raw columns retained.
+output_keep_unmapped: false
+
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+
+output_date_format: "%d-%b-%Y"
+
+# -------------------------------------------------------
+# DESTINATION
+# Which Supy entity this partner's sales upload to.
+# -------------------------------------------------------
+destination:
+  entity: "Street Food Ltd."

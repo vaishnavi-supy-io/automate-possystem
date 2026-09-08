@@ -1,0 +1,108 @@
+# ============================================================
+# HomeCook — per-order scraping, PRICES FROM LOOKUP
+# ============================================================
+# Manual process this replaces:
+#   My Orders > only Completed, Dispatched or Delivered orders
+#   > Open order > Order Summary > Copy Items & Quantities.
+#   Refer to the "JustEat Business - Menu Pricing" tab for price info.
+#
+# ⚠️  Like JustEat Business, this portal exposes NO prices — they are
+#     resolved from mappings/menu_prices.csv and an unmatched item fails
+#     the run rather than uploading a zero.
+#
+# ⚠️  Discover selectors:  python debug_selectors.py --partner homecook
+
+portal:
+  name: "HomeCook"
+  base_url: "https://homecooks-scm.vercel.app"
+  login_url: "https://homecooks-scm.vercel.app/login"     # VERIFY
+  # ✅ CORRECTED 2026-09-02. This was /dashboard/orders, which renders a
+  # summary widget page with NO order table at all — the scrape would have
+  # found nothing even with perfect selectors. The producer order list lives
+  # behind the sidebar's "My Orders" link.
+  orders_url: "https://homecooks-scm.vercel.app/dashboard/my-orders"
+  # ✅ CONFIRMED 2026-09-01 by opening orders_url with the saved session: the
+  # producer portal renders a persistent left sidebar (Dashboard, My Orders,
+  # My Stock & Sales, My Products, My Compliance, Settings) with Sign out at
+  # its foot. Sign out cannot appear while logged out, so it is the safest
+  # marker. Previously empty, which disabled the cached-session check entirely:
+  # the run went to login_url, was redirected to the logged-in dashboard, and
+  # timed out waiting for an email field that was not there.
+  # ⚠️  THE ">> visible=true" FILTER IS LOAD-BEARING. The portal renders the
+  #     sidebar TWICE — a desktop copy and a hidden mobile drawer — and the
+  #     HIDDEN one matches first. A bare "text=Sign out" therefore resolves to
+  #     a zero-box element and a visibility wait never completes, which looks
+  #     exactly like an expired session. Verified 2026-09-01: bare selector
+  #     times out at 5s, this one resolves in 0.0s.
+  authenticated_element: "text=Sign out >> visible=true"
+
+auth:
+  type: password
+  username_env: HOMECOOK_USERNAME
+  password_env: HOMECOOK_PASSWORD
+
+selectors:
+  # ✅ CONFIRMED 2026-08-06 from the live login page (no login performed).
+  username_field: "input[autocomplete='email']"
+  password_field: "input[autocomplete='current-password']"
+  login_button: "button:has-text('Sign in')"
+  login_error: ""                  # VERIFY — needs one failed login to observe
+  # No cookie banner on this portal, but the dashboard pops a "New Order"
+  # modal that covers the page and swallows clicks. dismiss_cookie_banner()
+  # is the hook for any click-blocking overlay, so Dismiss goes here.
+  cookie_accept: "button:has-text('Dismiss')"
+
+  # ✅ ALL DERIVED 2026-09-02 from the live logged-in table (read-only DOM
+  # inspection, no orders touched). /dashboard/my-orders is a plain HTML table:
+  #   th: PO Number | Status | Items | Cook Date | Delivery Date | Created | Action
+  order_rows: "table tbody tr"
+  # Each row's PO number links to the order: /dashboard/my-orders/<uuid>
+  order_link: "a[href*='/dashboard/my-orders/']"
+  # Delivery Date — an order created 19 Aug for delivery 01 Sep
+  # is a 01 Sep sale, matching the &Dine convention. Column 6 is Created if
+  # Supy should book on order-placed date instead.
+  order_date: "td:nth-child(5)"
+  # renders upper-case (ACCEPTED / DELIVERED); status_matches is
+  # case-insensitive so filters.keep_status needs no change
+  status: "td:nth-child(2)"
+  next_page: ""
+
+  # order_id is resolved on the DETAIL page, not the list row — pointing it at
+  # a table cell there returned the product name ("Chicken Satay") as the
+  # order id. The detail page's <h1> is the PO number. Verified 2026-09-02.
+  order_id: "h1"                        # PO-20260901-4TB
+  order_date_detail: ""
+  # Detail page (/dashboard/my-orders/<uuid>) has a LINE ITEMS table:
+  #   th: Product | SKU | Tag | Qty
+  # Scoped by the SKU header because the page carries a second Batch Details
+  # table whose first column is also "Product" — an unscoped "table tbody tr"
+  # would mix produced-quantity rows into the sales lines.
+  line_item_rows: "table:has(th:text-is('SKU')) tbody tr"
+  item_name: "td:nth-child(1)"           # Product
+  item_qty: "td:nth-child(4)"           # Qty — a bare integer, e.g. 100
+  item_unit_price: ""              # not present on this portal — leave blank
+
+filters:
+  # Only these three statuses represent real, uploadable sales.
+  keep_status:
+    - "Completed"
+    - "Dispatched"
+    - "Delivered"
+
+pagination:
+  max_pages: 20
+
+dates:
+  # ✅ CONFIRMED 2026-09-02 — the table renders "11 Sep 2026".
+  list_format: "%d %b %Y"
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: lookup
+  lookup_csv: "mappings/homecook_prices.csv"
+  unit_price_is_per_item: true
+  tax_divisor: 1.2
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

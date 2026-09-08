@@ -1,0 +1,47 @@
+item_name,price_inc_tax
+# ============================================================
+# JustEat Business - unit price INCLUDING VAT, GBP.
+# Split from the shared menu_prices.csv on 2026-09-08.
+#
+# 21 items, from a live unattended scrape of 2026-09-08 covering
+# 2026-09-01 to 2026-09-07 (30 line items).
+#
+# WHY THIS FILE IS SEPARATE FROM HOMECOOK'S:
+# Street Food charges different prices per channel. &Dine runs almost
+# exactly 1.6x Feedr on every item where both are observed. A single
+# shared sheet forces one price on every lookup-priced channel, so
+# whichever channel it was not derived from is silently wrong.
+#
+# EVERY ROW IS COMMENTED OUT ON PURPOSE. The figures are what OTHER
+# channels charge - reference points, NOT JustEat Business's rate card.
+# Confirm each against the 'JustEat Business - Menu Pricing' tab, then
+# uncomment. An item left commented FAILS the run, which is intended:
+# a guessed price corrupts the customer's food-cost numbers.
+# ------------------------------------------------------------
+# ONE reference only (Feedr) - still needs confirming, not a JEB price:
+# 1 Massaman Beef Bao Bun,3.72                            # feedr 3.72
+# 2 Bao Bun,7.18                                          # feedr 7.18
+# Chicken Satay and Peanut Sauce,7.47                     # feedr 7.47
+# Crispy Duck Rolls with hoisin,4.34                      # feedr 4.34
+# Massaman (Beef),8.09                                    # feedr 8.09
+# Red Curry (Chicken),7.47                                # feedr 7.47
+# Thai Green Curry (Chicken),7.47                         # feedr 7.47
+# Tofu Peanut Skewers,4.06                                # feedr 4.06
+# Vegetarian Spring Rolls,3.72                            # feedr 3.72
+#
+# CHANNELS DISAGREE - do NOT pick one without the rate card:
+# Chicken Dumplings,                                      # anddine 6.95 | feedr 4.34
+# Pad Thai (Beef),                                        # anddine 12.95 | feedr 8.09
+# Pad Thai (Chicken),                                     # anddine 11.95 | feedr 7.47
+# Pad Thai (Prawns),                                      # anddine 12.95 | feedr 8.09
+# Pad Thai (Tofu),                                        # anddine 11.95 | feedr 7.18
+# Prawn Crackers,                                         # anddine 4.20 | feedr 2.19
+# Stir Fry Chilli & Basil (Beef),                         # anddine 12.95 | feedr 8.09
+# Stir Fry Chilli & Basil (Chicken),                      # anddine 11.95 | feedr 7.47
+# Stir Fry Chilli & Basil (Tofu),                         # anddine 11.95 | feedr 7.47
+# Vegetable Dumplings,                                    # anddine 6.95 | feedr 4.34
+#
+# NO reference anywhere in this repo - must come from the client:
+# Chicken Tom Yum,
+# Tofu with Rice Peanut Sauce,
+# ============================================================
