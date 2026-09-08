@@ -37,6 +37,7 @@ Exit codes:
 """
 
 import argparse
+import collections
 import functools
 import json
 import os
@@ -1552,6 +1553,150 @@ def format_range(date_from: datetime, date_to: datetime, fmt: str) -> str:
 # Orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
+def fetch_rows_via_capture(cfg: dict, partner: str, date_from, date_to) -> list:
+    """
+    Read the JSON the SPA itself receives, rather than replaying its query.
+
+    Added 2026-09-08 for HomeCook, which is backed by Supabase. Replaying with
+    credentials lifted from its requests returns 0 rows — row-level security
+    evaluates the session identity, and a replayed header is not it. Reading
+    the response the app already got sidesteps that entirely.
+
+    Prices are NOT in po_lines; only the PO's total_amount is. For these
+    single-item POs the unit price is total_amount / quantity, verified
+    against a pair that differ only in size: Tofu Thai Green Curry is 521.00
+    at x100 and 1042.00 at x200 — exactly double, so there is no fixed
+    delivery component folded into the total.
+    """
+    api = cfg.get("api") or {}
+    for key in ("seed_url", "match"):
+        if not api.get(key):
+            raise ConfigError(
+                f"partners/{partner}.yaml uses api.mode: capture_response "
+                f"but sets no api.{key}")
+
+    statuses = {s.upper() for s in (api.get("statuses") or [])}
+    date_field = api.get("date_field", "delivery_date")
+    lines_key = api.get("lines_key", "po_lines")
+    total_key = api.get("total_key", "total_amount")
+    qty_key = api.get("qty_key", "quantity")
+    name_key = api.get("name_key", "sku_name")
+
+    best: list = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx_kwargs = {"locale": "en-GB", "timezone_id": "Europe/London"}
+        storage = _storage_path(partner)
+        if storage.exists():
+            ctx_kwargs["storage_state"] = str(storage)
+        context = browser.new_context(**ctx_kwargs)
+        page = context.new_page()
+
+        def _capture(resp):
+            if api["match"] not in resp.url:
+                return
+            if total_key not in resp.url:      # the widest projection wins
+                return
+            try:
+                data = resp.json()
+            except Exception:
+                return
+            if isinstance(data, list) and len(data) > len(best):
+                best.clear()
+                best.extend(data)
+
+        page.on("response", _capture)
+        try:
+            page.goto(api["seed_url"], timeout=60000, wait_until="domcontentloaded")
+            page.wait_for_timeout(8000)
+
+            sel = cfg.get("selectors", {}) or {}
+            if page.locator(sel.get("password_field", "input[type=password]")).count():
+                auth_cfg = cfg.get("auth", {}) or {}
+                user = _get_credential(
+                    auth_cfg.get("username_env", ""), partner, "username")
+                pw = _get_credential(
+                    auth_cfg.get("password_env", ""), partner, "password")
+                page.fill(sel.get("username_field", "input[type=email]"), user)
+                page.fill(sel.get("password_field", "input[type=password]"), pw)
+                page.click(sel.get("login_button", "button[type=submit]"))
+                page.wait_for_timeout(12000)
+                best.clear()
+                page.goto(api["seed_url"], timeout=60000, wait_until="networkidle")
+            page.wait_for_timeout(int(api.get("token_wait_ms", 15000)))
+
+            if not best:
+                raise ScrapeError(
+                    f"{partner}: no {api['match']} payload seen. The session "
+                    f"may have lapsed — re-run with --force-login.")
+            log("nav", "api_captured", "ok", extra={"records": len(best)})
+            print(f"  [api] {len(best)} record(s) captured")
+        finally:
+            context.close()
+            browser.close()
+
+    rows, skipped = [], collections.Counter()
+    for po in best:
+        status = str(po.get("status") or "").upper()
+        if statuses and status not in statuses:
+            skipped[f"status={status}"] += 1
+            continue
+        raw_date = po.get(date_field)
+        if not raw_date:
+            skipped["no-date"] += 1
+            continue
+        when = datetime.fromisoformat(str(raw_date)[:10])
+        if not (date_from.date() <= when.date() <= date_to.date()):
+            skipped["out-of-range"] += 1
+            continue
+
+        lines = po.get(lines_key) or []
+        total = po.get(total_key)
+        total_qty = sum((ln.get(qty_key) or 0) for ln in lines)
+        if not lines or not total_qty or total is None:
+            skipped["no-lines-or-total"] += 1
+            continue
+        # Only the PO total is priced. Splitting it across DIFFERENT products
+        # would invent per-item prices, so refuse rather than guess.
+        names = {ln.get(name_key) for ln in lines}
+        if len(names) > 1:
+            log("transform", "multi_item_po", "warn",
+                extra={"po": po.get("po_number"), "items": sorted(map(str, names))})
+            print(f"  [!] {po.get('po_number')} has {len(names)} different items "
+                  f"but only one total — cannot price it; skipped.",
+                  file=sys.stderr)
+            skipped["multi-item"] += 1
+            continue
+
+        unit = float(total) / total_qty
+        for ln in lines:
+            rows.append({
+                "order_id": po.get("po_number"),
+                "order_date": when,
+                "item_name": str(ln.get(name_key) or "").strip(),
+                "qty": ln.get(qty_key) or 0,
+                "unit_price_inc_tax": round(unit, 4),
+            })
+
+    if skipped:
+        print(f"  [api] skipped: {dict(skipped)}")
+
+    path = _scraped_path(partner)
+    if not rows and path.exists():
+        print(f"  [!] API returned 0 usable rows — keeping the previous "
+              f"{path.name}.", file=sys.stderr)
+        log("scrape", "preserved_previous_scrape", "warn", extra={"path": str(path)})
+    else:
+        try:
+            path.write_text(json.dumps(
+                [{**r, "order_date": r["order_date"].isoformat()
+                  if r.get("order_date") else None} for r in rows], indent=2))
+        except OSError:
+            pass
+    return rows
+
+
 def fetch_rows_via_api(cfg: dict, partner: str, date_from, date_to) -> list:
     """
     Read line items from the portal's own JSON API instead of its DOM.
@@ -1716,7 +1861,10 @@ def run_partner(partner: str, args) -> int:
         # The portal's own JSON API, not its DOM. No selectors involved.
         print("[Stage 1-2] Reading the portal API...")
         try:
-            rows = fetch_rows_via_api(cfg, partner, date_from, date_to)
+            mode = (cfg["api"].get("mode") or "replay").lower()
+            fetch = (fetch_rows_via_capture if mode == "capture_response"
+                     else fetch_rows_via_api)
+            rows = fetch(cfg, partner, date_from, date_to)
             print(f"[Stage 1-2] ✓ {len(rows)} line item(s) from the API\n")
         except (AuthError, ConfigError) as exc:
             print(f"[✗] {exc}", file=sys.stderr)

@@ -98,9 +98,66 @@ dates:
   detail_format: ""
   default_lookback_days: 1
 
+# ============================================================
+# API SOURCE — added 2026-09-08. HomeCook is read from the JSON its own SPA
+# receives, not from the rendered page.
+#
+# WHY: the portal shows no prices, which is why this partner used a lookup
+# sheet. But HomeCooks runs on Supabase, and the app fetches
+# purchase_orders?select=...,total_amount,...,po_lines on every page load.
+# The money is in the payload; the interface simply never renders it.
+#
+# mode: capture_response, NOT replay. Replaying the query with credentials
+# lifted from the app's own requests returns 200 with ZERO rows — Supabase
+# row-level security evaluates the session identity and a copied header is not
+# it. Reading the response the app already received sidesteps that.
+#
+# This also fixes severe under-reporting: the DOM scrape found ONE purchase
+# order. The payload carries 23.
+# ============================================================
+api:
+  enabled: true
+  mode: capture_response
+  seed_url: "https://homecooks-scm.vercel.app/dashboard/my-orders"
+  match: "/rest/v1/purchase_orders"
+  token_wait_ms: 15000
+  # The app issues several purchase_orders queries with different projections;
+  # only the one selecting total_amount is useful, and the widest result wins.
+  total_key: "total_amount"
+  lines_key: "po_lines"
+  qty_key: "quantity"
+  name_key: "sku_name"
+  date_field: "delivery_date"
+  # A PO is a SALE only once it has shipped. SENT and ACCEPTED have delivery
+  # dates in the FUTURE (PO-20260907-JL3 delivers 18-Sep), so counting them
+  # would book revenue that has not happened. Matches the documented manual
+  # process: "only Completed, Dispatched or Delivered orders".
+  statuses: ["DELIVERED", "COMPLETED", "DISPATCHED"]
+
 pricing:
-  source: lookup
-  lookup_csv: "mappings/homecook_prices.csv"
+  # ✅ PRICES NOW COME FROM THE PORTAL, not a sheet. po_lines carries no money
+  # field, but the PO's total_amount does, and unit = total_amount / quantity.
+  #
+  # Verified it scales cleanly with quantity, so no fixed delivery fee is
+  # folded in: Tofu Thai Green Curry is 521.00 at x100 and 1042.00 at x200 —
+  # exactly double, i.e. £5.21/unit both times.
+  #
+  # Strictly better than the sheet it replaces, because the real rate MOVES
+  # and a static sheet cannot follow it:
+  #   Chicken Satay              5.71 on 14 POs, but 4.95 on PO-20260727-HDS
+  #   Thai Green Chicken Curry   5.21 (22-Jul)  ->  4.96 (28-Aug)
+  #   Tofu Satay (VG)            5.71
+  #   Tofu Thai Green Curry (VG) 5.21
+  #
+  # A multi-item PO is REFUSED rather than split: one total across different
+  # products cannot yield per-item prices without inventing them.
+  #
+  # ⚠️  VAT direction unverified, as elsewhere here. tax_divisor 1.2 with
+  #     price_includes_tax defaulting True treats total_amount as GROSS. These
+  #     are WHOLESALE food POs and much wholesale food is zero-rated in the UK,
+  #     in which case dividing by 1.2 understates by 20%. Confirm against one
+  #     HomeCooks invoice before trusting the money columns.
+  source: scraped
   unit_price_is_per_item: true
   tax_divisor: 1.2
 
