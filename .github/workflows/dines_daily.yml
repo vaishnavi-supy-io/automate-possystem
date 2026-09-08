@@ -1,0 +1,157 @@
+name: Dines Daily POS Report
+
+# Black Bear Burger dine-in sales from the Dines dashboard.
+#
+# 04:00 UTC = 08:00 Dubai, matching every other pipeline in this repo so all
+# clients' reports land at the same time. That is 05:00 London (BST), by which
+# point yesterday's trading is long closed. The pipeline always reports
+# YESTERDAY.
+#
+# Each branch is a SEPARATE login, so the run loops branch → context → login →
+# PIN → export. One branch failing never stops the others, and branches with
+# no credentials in the environment are reported as `no_creds` and skipped
+# rather than failing the run — which is what keeps this green while only
+# 4 of the 9 configured branches have logins.
+on:
+  schedule:
+    - cron: "0 4 * * *"
+  workflow_dispatch:      # manual trigger from the Actions UI
+
+jobs:
+  run-pipeline:
+    name: Export, Transform & Email Dines Report
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      - name: Create runtime directories
+        run: mkdir -p downloads output state/dines logs screenshots mappings
+
+      - name: Run Dines pipeline (attempt 1)
+        id: attempt1
+        continue-on-error: true
+        env:
+          DINES_CW_USERNAME:  ${{ secrets.DINES_CW_USERNAME }}
+          DINES_CW_PASSWORD:  ${{ secrets.DINES_CW_PASSWORD }}
+          DINES_CW_PIN:       ${{ secrets.DINES_CW_PIN }}
+          DINES_VIC_USERNAME: ${{ secrets.DINES_VIC_USERNAME }}
+          DINES_VIC_PASSWORD: ${{ secrets.DINES_VIC_PASSWORD }}
+          DINES_VIC_PIN:      ${{ secrets.DINES_VIC_PIN }}
+          DINES_OS_USERNAME:  ${{ secrets.DINES_OS_USERNAME }}
+          DINES_OS_PASSWORD:  ${{ secrets.DINES_OS_PASSWORD }}
+          DINES_OS_PIN:       ${{ secrets.DINES_OS_PIN }}
+          DINES_PD_USERNAME:  ${{ secrets.DINES_PD_USERNAME }}
+          DINES_PD_PASSWORD:  ${{ secrets.DINES_PD_PASSWORD }}
+          DINES_PD_PIN:       ${{ secrets.DINES_PD_PIN }}
+          # The five branches awaiting credentials (SH, BX, CM, EM, WF) need no
+          # entry here — absent keys are skipped, not failed. Add each trio as
+          # a secret and that branch joins the run with no workflow change.
+          GMAIL_USER:              ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:      ${{ secrets.GMAIL_APP_PASSWORD }}
+          DINES_REPORT_RECIPIENT:  ${{ secrets.DINES_REPORT_RECIPIENT }}
+          REPORT_RECIPIENT:        ${{ secrets.REPORT_RECIPIENT }}
+        run: python dines_automation.py --all-branches
+
+      - name: Retry — wait 2 minutes then try again
+        if: steps.attempt1.outcome == 'failure'
+        run: sleep 120
+
+      - name: Run Dines pipeline (attempt 2 — fresh logins)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          DINES_CW_USERNAME:  ${{ secrets.DINES_CW_USERNAME }}
+          DINES_CW_PASSWORD:  ${{ secrets.DINES_CW_PASSWORD }}
+          DINES_CW_PIN:       ${{ secrets.DINES_CW_PIN }}
+          DINES_VIC_USERNAME: ${{ secrets.DINES_VIC_USERNAME }}
+          DINES_VIC_PASSWORD: ${{ secrets.DINES_VIC_PASSWORD }}
+          DINES_VIC_PIN:      ${{ secrets.DINES_VIC_PIN }}
+          DINES_OS_USERNAME:  ${{ secrets.DINES_OS_USERNAME }}
+          DINES_OS_PASSWORD:  ${{ secrets.DINES_OS_PASSWORD }}
+          DINES_OS_PIN:       ${{ secrets.DINES_OS_PIN }}
+          DINES_PD_USERNAME:  ${{ secrets.DINES_PD_USERNAME }}
+          DINES_PD_PASSWORD:  ${{ secrets.DINES_PD_PASSWORD }}
+          DINES_PD_PIN:       ${{ secrets.DINES_PD_PIN }}
+          GMAIL_USER:              ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:      ${{ secrets.GMAIL_APP_PASSWORD }}
+          DINES_REPORT_RECIPIENT:  ${{ secrets.DINES_REPORT_RECIPIENT }}
+          REPORT_RECIPIENT:        ${{ secrets.REPORT_RECIPIENT }}
+        run: python dines_automation.py --all-branches --force-login
+
+      - name: Upload diagnostics on failure
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: dines-failure-diagnostics
+          retention-days: 14
+          if-no-files-found: ignore
+          path: |
+            logs/dines_*.jsonl
+            screenshots/dines_*.png
+            downloads/dines_*_raw.csv
+
+      - name: Send failure alert email
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:              ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:      ${{ secrets.GMAIL_APP_PASSWORD }}
+          DINES_REPORT_RECIPIENT:  ${{ secrets.DINES_REPORT_RECIPIENT }}
+          REPORT_RECIPIENT:        ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python - <<'EOF'
+          import os, re, smtplib
+          from email.mime.text import MIMEText
+
+          gmail_user = os.environ["GMAIL_USER"]
+          gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+          raw = (os.environ.get("DINES_REPORT_RECIPIENT")
+                 or os.environ.get("REPORT_RECIPIENT") or gmail_user)
+          recipients = [a.strip() for a in re.split(r"[,;]", raw) if a.strip()]
+          run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+
+          subject = "⚠️ Black Bear Burger (Dines) report FAILED — upload by hand"
+          body = f"""The daily Dines pipeline failed after 2 attempts.
+
+          Yesterday's dine-in sales have NOT been uploaded to Supy for any
+          branch. They need exporting by hand today:
+            Reports -> manager PIN -> Reporting -> Sales By Product ->
+            date: Yesterday -> Export
+
+          Run log and screenshots are attached to the workflow run as the
+          "dines-failure-diagnostics" artifact:
+            https://github.com/{repo}/actions/runs/{run_id}
+          """
+          body = "\\n".join(line.strip() for line in body.splitlines())
+
+          msg = MIMEText(body)
+          msg["Subject"] = subject
+          msg["From"] = gmail_user
+          msg["To"] = ", ".join(recipients)
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as server:
+              server.login(gmail_user, gmail_password)
+              server.sendmail(gmail_user, recipients, msg.as_string())
+          print(f"Failure alert sent to {', '.join(recipients)}")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1
