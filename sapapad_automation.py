@@ -34,7 +34,7 @@ import sys
 import time
 import traceback
 import uuid
-from datetime import datetime
+from datetime import datetime, timedelta
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
 from email.mime.text import MIMEText
@@ -248,6 +248,23 @@ def _session_is_valid(page: Page) -> bool:
         return False
 
 
+# The sales date this run covers. None = yesterday, i.e. the daily job.
+TARGET_DATE: Optional[datetime] = None
+
+
+def target_date() -> datetime:
+    """The day being reported. Yesterday unless --date said otherwise.
+
+    Every date decision goes through here. Before 2026-09-03 the date was
+    derived independently in three places (the nav click, the Sales Date
+    injector and the validator), which is why the pipeline could only ever
+    produce yesterday and ten August days could not be recovered.
+    """
+    if TARGET_DATE is not None:
+        return TARGET_DATE
+    return datetime.now() - timedelta(days=1)
+
+
 def stage_auth(page: Page, context, force_login: bool) -> None:
     t0 = time.monotonic()
     sel = CONFIG["selectors"]
@@ -334,6 +351,73 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
 # ──────────────────────────────────────────────────────────────────────────────
 
 @retry(max_attempts=3, exceptions=(NavError,))
+def _select_report_date(page: Page) -> None:
+    """Point the dashboard's date filter at target_date().
+
+    Yesterday keeps the original preset click — the daily job is in production
+    and its path is proven. Any other date goes through Custom, typing a
+    range that mirrors the portal's own 04:00 -> 04:00 business day.
+    """
+    df = CONFIG.get("date_filter") or {}
+    when = target_date()
+    is_yesterday = when.date() == (datetime.now() - timedelta(days=1)).date()
+
+    def option(kind: str) -> str:
+        """Selector for a date option — id if configured, else its text."""
+        by_id = df.get(f"{kind}_option")
+        if by_id:
+            return by_id
+        return df["option_template"].format(label=df[f"{kind}_label"])
+
+    # Open the dropdown only if it is not already open. Clicking the toggle
+    # when it IS open closes it, leaving every option present-but-hidden.
+    custom_sel = option("custom")
+    already_open = False
+    try:
+        el = page.query_selector(custom_sel)
+        already_open = bool(el and el.is_visible())
+    except Exception:
+        already_open = False
+    if not already_open:
+        page.click(df["toggle"])
+    page.wait_for_selector(custom_sel, state="visible", timeout=20_000)
+
+    if is_yesterday:
+        label = df["yesterday_label"]
+        page.click(option("yesterday"))
+        page.wait_for_selector(f"{df['toggle']}:has-text('{label}')", timeout=20_000)
+        log("nav", "select_date", "ok", extra={"mode": "preset", "label": label})
+        return
+
+    page.click(custom_sel)
+    page.wait_for_selector(df["from_field"], state="visible", timeout=20_000)
+
+    fmt = df.get("input_format", "%d/%m/%Y %H:%M:%S")
+    # Reuse the day-boundary time the portal itself put in the field, so a
+    # changed business-day start is picked up rather than assumed.
+    day_start = df.get("default_day_start", "04:00:00")
+    try:
+        existing = page.input_value(df["from_field"]) or ""
+        parsed = datetime.strptime(existing.strip(), fmt)
+        day_start = parsed.strftime("%H:%M:%S")
+    except Exception:
+        pass
+
+    start = datetime.strptime(f"{when:%d/%m/%Y} {day_start}", "%d/%m/%Y %H:%M:%S")
+    end = start + timedelta(days=1)
+    page.fill(df["from_field"], "")
+    page.fill(df["from_field"], start.strftime(fmt))
+    page.fill(df["to_field"], "")
+    page.fill(df["to_field"], end.strftime(fmt))
+    page.click(df["apply_button"])
+    page.wait_for_timeout(3000)
+    log("nav", "select_date", "ok",
+        extra={"mode": "custom", "from": start.strftime(fmt),
+               "to": end.strftime(fmt)})
+    if _verbose:
+        print(f"  [date] custom range {start.strftime(fmt)} -> {end.strftime(fmt)}")
+
+
 def stage_navigate_and_download(
     page: Page,
     location_id: Optional[str] = None,
@@ -371,6 +455,8 @@ def stage_navigate_and_download(
             if action == "click":
                 _nav_click(page, step_cfg)
 
+            elif action == "select_date":
+                _select_report_date(page)
             elif action == "wait_seconds":
                 secs = int(step_cfg.get("seconds", 10))
                 if _verbose:
@@ -723,11 +809,11 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
 
             if inject == "empty":
                 df[target] = ""
-            elif inject == "date_yesterday":
-                # Yesterday relative to today (the report always covers the previous day)
-                from datetime import timedelta
-                yesterday = datetime.now() - timedelta(days=1)
-                report_date = yesterday.strftime(fmt)
+            elif inject in ("date_yesterday", "date_target"):
+                # The day this run covers — yesterday for the daily job, or
+                # whatever --date asked for. The name "date_yesterday" is kept
+                # so existing configs keep working.
+                report_date = target_date().strftime(fmt)
                 df[target] = report_date
             elif inject == "date_from_filename":
                 match = re.search(r"(\d{4})(\d{2})(\d{2})", raw_path.name)
@@ -793,9 +879,14 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
         df = df[ordered + extras]
 
         # ── Export ────────────────────────────────────────────
-        today      = datetime.now().strftime("%Y-%m-%d")
+        # The date in the filename is the SALES date, not the run date. It was
+        # datetime.now() until 2026-09-03, which meant a file named
+        # 2026-08-26 actually held 25 Aug sales (the daily job runs the
+        # morning after) — and a --date backfill would have been stamped with
+        # today, overwriting the current day's report with historic data.
+        sales_date = target_date().strftime("%Y-%m-%d")
         branch_slug = re.sub(r"[^A-Za-z0-9_-]", "_", branch_name) if branch_name else "all_locations"
-        out_path   = OUTPUT_DIR / f"sapapad_{branch_slug}_{today}_{RUN_ID[:8]}.xlsx"
+        out_path   = OUTPUT_DIR / f"sapapad_{branch_slug}_{sales_date}_{RUN_ID[:8]}.xlsx"
         df.to_excel(str(out_path), index=False, engine="openpyxl")
 
     except (KeyError, ValueError, TypeError) as exc:
@@ -901,15 +992,14 @@ def stage_verify(
         out_df = pd.read_excel(out_path, engine="openpyxl")
 
         if "Sales Date *" in out_df.columns and len(out_df) > 0:
-            from datetime import timedelta
-            yesterday = (datetime.now() - timedelta(days=1)).strftime(
+            expected = target_date().strftime(
                 CONFIG.get("output_date_format", "%d-%b-%Y")
             )
-            bad_dates = out_df[out_df["Sales Date *"].astype(str) != yesterday]
+            bad_dates = out_df[out_df["Sales Date *"].astype(str) != expected]
             if not bad_dates.empty:
                 result.warn(
                     f"{len(bad_dates)} rows have unexpected Sales Date "
-                    f"(expected {yesterday!r}): "
+                    f"(expected {expected!r}): "
                     f"{bad_dates['Sales Date *'].unique()[:3].tolist()}"
                 )
 
@@ -1498,6 +1588,10 @@ def main() -> int:
                         help="Run with headed browser and verbose logging")
     parser.add_argument("--from-stage", type=int, default=1, metavar="N",
                         help="Resume from stage N (1=auth, 2=nav, 3=transform, 4=email)")
+    parser.add_argument("--date", metavar="YYYY-MM-DD",
+                        help="Sales date to report (default: yesterday). Uses "
+                             "the dashboard's Custom date filter, honouring "
+                             "Sapaad's 04:00 business-day boundary.")
     parser.add_argument("--force-login", action="store_true",
                         help="Ignore cached session; always re-authenticate")
     parser.add_argument("--no-email", action="store_true",
@@ -1509,6 +1603,20 @@ def main() -> int:
     parser.add_argument("--resend-run-id", metavar="RUN_ID",
                         help="Re-run transform+email for all raw files from a prior run (no browser needed)")
     args = parser.parse_args()
+
+    # Pin the reporting date for the whole run before any stage looks at it.
+    if getattr(args, "date", None):
+        global TARGET_DATE
+        try:
+            TARGET_DATE = datetime.strptime(args.date, "%Y-%m-%d")
+        except ValueError:
+            print(f"[✗] --date must be YYYY-MM-DD, got {args.date!r}",
+                  file=sys.stderr)
+            return 1
+        if TARGET_DATE.date() >= datetime.now().date():
+            print(f"[✗] --date {args.date} is today or later; the day is not "
+                  f"closed off yet. Use yesterday or earlier.", file=sys.stderr)
+            return 1
 
     _init_logger(verbose=args.debug)
     from_stage = args.from_stage
