@@ -1,0 +1,21 @@
+item_name,price_inc_tax
+# ============================================================
+# HomeCook — unit price INCLUDING VAT, GBP.
+# Split from the shared menu_prices.csv on 2026-09-08.
+#
+# THESE ARE WHOLESALE PRODUCTION POs, NOT RETAIL SALES.
+# The live scrape returned qty 100 of a single line (PO-20260819-84B). No
+# retail menu price is a valid substitute at that quantity, and none of these
+# four items appears on any priced channel in this repo, so there is nothing
+# to derive from either. The per-unit WHOLESALE rate has to come from the
+# client — it cannot be recovered from data we hold.
+#
+# Rows are commented out on purpose: an unpriced item fails the run, which is
+# correct. A retail price used here would overstate cost of sales on every
+# production order.
+# ------------------------------------------------------------
+# Chicken Satay,
+# Tofu Satay (VG),
+# Thai Green Chicken Curry,
+# Tofu Thai Green Curry with Jasmine Rice (VG),
+# ============================================================

@@ -1,0 +1,135 @@
+name: Symphony Daily POS Report
+
+# Micros Symphony (Oracle Reporting & Analytics) — Marriott enterprise,
+# property "DXBPC Four Points by Sheraton". Driven by the shared automation.py
+# engine with symphony_config.yaml; see that file's header for the column
+# mapping and the locations finding.
+
+on:
+  schedule:
+    # 08:00 Dubai time (UTC+4) = 04:00 UTC. Matches the Sapapad job — the
+    # report's saved parameter set defaults to "Business Dates: Yesterday",
+    # so a morning run always picks up a complete previous trading day.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+
+jobs:
+  run-pipeline:
+    name: Download, Transform & Email Symphony Report
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        run: playwright install chromium --with-deps
+
+      # Attempt 1 runs with no cached storage_state (CI starts clean), so the
+      # engine performs a full OIDC sign-in. The Oracle JET login needs the
+      # generous field_timeout_ms set in symphony_config.yaml — do not lower it.
+      - name: Run Symphony pipeline (attempt 1)
+        id: attempt1
+        continue-on-error: true
+        env:
+          SYMPHONY_USERNAME:         ${{ secrets.SYMPHONY_USERNAME }}
+          SYMPHONY_COMPANY:          ${{ secrets.SYMPHONY_COMPANY }}
+          SYMPHONY_PASSWORD:         ${{ secrets.SYMPHONY_PASSWORD }}
+          GMAIL_USER:                ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          SYMPHONY_REPORT_RECIPIENT: ${{ secrets.SYMPHONY_REPORT_RECIPIENT }}
+        run: python automation.py --config symphony_config.yaml
+
+      - name: Retry — wait 2 minutes then try again
+        if: steps.attempt1.outcome == 'failure'
+        run: sleep 120
+
+      - name: Run Symphony pipeline (attempt 2 — retry)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          SYMPHONY_USERNAME:         ${{ secrets.SYMPHONY_USERNAME }}
+          SYMPHONY_COMPANY:          ${{ secrets.SYMPHONY_COMPANY }}
+          SYMPHONY_PASSWORD:         ${{ secrets.SYMPHONY_PASSWORD }}
+          GMAIL_USER:                ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:        ${{ secrets.GMAIL_APP_PASSWORD }}
+          SYMPHONY_REPORT_RECIPIENT: ${{ secrets.SYMPHONY_REPORT_RECIPIENT }}
+        run: python automation.py --config symphony_config.yaml --force-login
+
+      # The alert goes to the operator list, NOT to SYMPHONY_REPORT_RECIPIENT —
+      # customer.care@ should not receive our infrastructure failures.
+      - name: Send failure alert email
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+
+          gmail_user     = os.environ["GMAIL_USER"]
+          gmail_password = os.environ["GMAIL_APP_PASSWORD"]
+          recipients     = [a.strip() for a in os.environ["REPORT_RECIPIENT"].split(",") if a.strip()]
+          run_id         = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo           = os.environ.get("GITHUB_REPOSITORY", "")
+
+          subject = "⚠️ Symphony POS Report FAILED — manual action needed"
+          body = f"""The daily Micros Symphony POS report pipeline failed after 2 attempts.
+
+          Property: DXBPC Four Points by Sheraton (Marriott)
+
+          GitHub Actions run: https://github.com/{repo}/actions/runs/{run_id}
+
+          Please check the logs and re-run manually from the Actions tab, or run locally:
+              python automation.py --config symphony_config.yaml
+
+          Note: customer.care@ was NOT sent a report for this date.
+          """
+
+          msg = MIMEText(body)
+          msg["Subject"] = subject
+          msg["From"]    = gmail_user
+          msg["To"]      = ", ".join(recipients)
+
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+              s.login(gmail_user, gmail_password)
+              s.sendmail(gmail_user, recipients, msg.as_string())
+
+          print("Failure alert sent.")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1
+
+      - name: Upload outputs as artifact (backup)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: symphony-report-${{ github.run_id }}
+          path: |
+            output/*.xlsx
+            logs/*.jsonl
+          retention-days: 30
+
+      - name: Upload screenshots on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: failure-screenshots-${{ github.run_id }}
+          path: screenshots/
+          retention-days: 7

@@ -1,0 +1,118 @@
+# ============================================================
+# Uber Eats Manager — per-order scraping (INTERIM SOLUTION)
+# ============================================================
+# ⚠️  STRATEGIC NOTE — read before investing in these selectors.
+#
+# Uber Eats has a real Reporting API with order and item-level sales data:
+#   https://developer.uber.com/docs/eats/introduction
+# It is NOT available to individual restaurants — access is gated to
+# approved POS/integration partners behind an NDA, a licensing agreement,
+# and partner-manager sign-off. Supy is a POS/inventory platform, so it
+# qualifies to apply.
+#
+# If Supy becomes an Uber Eats integration partner, this scraper becomes
+# obsolete and EVERY Supy customer on Uber Eats gets automated sales
+# ingestion for free. Treat this config as a stopgap.
+#
+# ⚠️  BLOCKED — headless automation is not possible as things stand.
+#
+# Probed 2026-08-06: restaurant.uber.com redirects to auth.uber.com, which asks
+# for "What's your phone number or email?" and then sends a ONE-TIME CODE by
+# SMS or WhatsApp. There is no password step. The PIN on file is an in-app
+# manager PIN, not a login credential — it cannot be used here.
+#
+# That means a scheduled headless run cannot authenticate: every login needs a
+# fresh code delivered to a phone. Options, best first:
+#   1. Pursue the official Reporting API (see above) — removes the problem.
+#   2. ATTACH to a real Chrome a human logged into — now the preferred manual
+#      route, and much less fragile than the old storage_state seeding. See
+#      browser.cdp_endpoint below and ./start_chrome_cdp.sh. Verified
+#      2026-09-03 that this is the only browser route: restaurant.uber.com
+#      redirects to auth.uber.com/v2 with a single
+#      #PHONE_NUMBER_or_EMAIL_ADDRESS field and the notice "You consent to
+#      receive a verification code by text or Whatsapp". No password step
+#      exists, so no stored credential can complete a login.
+#   3. Automate code retrieval from an SMS/WhatsApp gateway. Significant extra
+#      moving parts for one partner; not recommended.
+#
+# Until one of those is in place, Uber Eats stays a manual upload. The selectors
+# below are intentionally left blank rather than half-guessed.
+
+portal:
+  name: "Uber Eats"
+  base_url: "https://restaurant.uber.com"
+  login_url: "https://restaurant.uber.com/login"
+  orders_url: "https://restaurant.uber.com/orders"      # VERIFY
+  # VERIFY — needs one logged-in session to capture. Until then the pipeline
+  # cannot validate a cached session and will always try to log in.
+  authenticated_element: ""
+
+auth:
+  # ⚠️  MISLEADING BY NECESSITY. There is no PIN login and no password login:
+  #     Uber sends a one-time code to a phone. UBER_EATS_PIN is the in-app
+  #     MANAGER PIN and cannot authenticate the web portal — it is left
+  #     configured only so --check reports the partner as provisioned.
+  #     Authentication happens by a human completing the OTP in the attached
+  #     Chrome; the pipeline never fills a credential for this partner.
+  type: pin
+  username_env: UBER_EATS_USERNAME
+  password_env: UBER_EATS_PIN
+
+# -------------------------------------------------------
+# BROWSER — attach, never launch
+# A launched browser cannot get past the OTP, and there is nothing to type.
+# Start Chrome with ./start_chrome_cdp.sh, log into restaurant.uber.com once
+# (the code goes to the account's phone), leave the window open, then run the
+# scraper. The session survives in the persistent profile, so later runs need
+# nobody present — but this partner can never run on GitHub Actions, which has
+# no browser to attach to.
+# -------------------------------------------------------
+browser:
+  cdp_endpoint: "http://localhost:9222"
+  nav_timeout_seconds: 90
+
+selectors:
+  # ✅ VERIFIED 2026-09-03 on auth.uber.com/v2 (form inspected, no login
+  # attempted). Used only by --debug/manual seeding; the daily path attaches
+  # to an already-authenticated browser instead.
+  username_field: "#PHONE_NUMBER_or_EMAIL_ADDRESS"               # VERIFY
+  # Uber asks for the email first, then reveals the PIN field — set this to
+  # the button that advances between the two steps.
+  username_submit_button: ""       # VERIFY
+  password_field: ""               # VERIFY — the PIN input
+  login_button: "button:has-text('Continue')"                 # VERIFY
+  login_error: ""
+
+  order_rows: ""                   # VERIFY
+  order_link: ""                   # VERIFY
+  order_date: ""                   # VERIFY
+  status: ""                       # VERIFY — exclude cancelled/refunded orders
+  next_page: ""
+
+  order_id: ""                     # VERIFY
+  order_date_detail: ""
+  line_item_rows: ""               # VERIFY
+  item_name: ""                    # VERIFY
+  item_qty: ""                     # VERIFY
+  item_unit_price: ""              # VERIFY
+
+filters:
+  # Fill in once the real status strings are known — cancelled and refunded
+  # orders must not reach Supy.
+  keep_status: []
+
+pagination:
+  max_pages: 20
+
+dates:
+  list_format: ""
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: scraped
+  unit_price_is_per_item: true
+  tax_divisor: 1.2
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

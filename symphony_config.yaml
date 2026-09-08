@@ -1,0 +1,309 @@
+# ============================================================
+# Micros Symphony (Oracle Reporting & Analytics) — tenant config
+# ============================================================
+# Driven by automation.py:  ./ .venv/bin/python automation.py --config symphony_config.yaml
+#
+# WHY THIS REUSES automation.py RATHER THAN A NEW SCRIPT
+# -----------------------------------------------------
+# Micros Symphony IS Oracle. The "Menu Item Sales by Definition" report in
+# Micros_Symphony_Manual.docx emits the SAME column headers that the existing
+# Independent tenant (reports.indpt.com, config.yaml) already consumes:
+#   Menu Item Name / Menu Item # / Menu Item Def / Price Level / Qty Sold /
+#   Returns / Net VAT before Disc. / Discounts VAT / Net VAT after Disc. /
+#   Gross before Disc. / Discounts / Gross after Disc.
+# So the whole Stage-3 column mapping below is not guesswork — it is the
+# mapping already running in production for Independent, copied verbatim.
+#
+# ✅ VERIFIED END-TO-END 2026-09-04. All four stages ran green against the live
+#    tenant (run_id 20260904T143834_9fbeae24):
+#      auth -> download -> transform -> 202-row, 9-column upload file.
+#    Reconciled against the report's own "Totals:" row:
+#      Sold QTY   620      = 620       (exact)
+#      incl. tax  21216.80 = 21216.80  (exact)
+#      excl. tax  17319.86 vs 17319.88 (2c, per-row rounding to 2dp over 202
+#                                       rows — expected, not a mismatch)
+#    Sales Date resolved to 03-Sep-2026 on a 4-Sep run, i.e. yesterday.
+#
+# ✅ RESOLVED 2026-09-07 — LOCATIONS. The earlier reading of "Locations | All"
+#     as "every branch summed together, unsplittable" was wrong, and the open
+#     question it raised is closed. Inspected the live Edit Parameters panel on
+#     report 100648: Oracle's own template branches on isLocationFilterEnabled(),
+#     which is FALSE for this account, so it renders the read-only variant
+#         <oj-input-text id="search_location_advanced" readonly=""> ...
+#              DXBPC Four Points by Sheraton
+#     i.e. the Locations parameter is pinned to ONE property and cannot be
+#     changed. (The panel's four "Advanced" links are Business Dates, Revenue
+#     Centers, Menu Items and Customize — there is no Locations one.)
+#     "All" therefore means "all locations THIS ACCOUNT can see" = that single
+#     property. There is nothing to split, and no per-location loop is needed:
+#     the export already IS a single branch. Stage 4 enabled on that basis.
+#     If Marriott ever grants this account a second property, the field would
+#     render as a selector instead — re-check this before trusting the totals.
+#
+# ✅ FIXED 2026-09-07 — FILENAME NOW CARRIES THE SALES DATE. automation.py's
+#     export used to name every file after TODAY, so the 4-Sep run of 3-Sep
+#     sales was filed as sales_report_2026-09-04. Rather than change that for
+#     every tenant at once (the Independent tenant's filename may be consumed
+#     downstream), the engine now reads an output: block and this config opts
+#     in. Independent keeps the old run-date name until someone decides to
+#     migrate it deliberately.
+
+portal:
+  name: "Micros Symphony"
+  # Property shown in the manual's screenshots: "Marriott (MH)",
+  # location "DXBPC Four Points by Sheraton".
+  # ✅ Supplied 2026-09-04. Oracle Restaurants IDM, OIDC sign-in.
+  # DNS: ors-idm.marr3.oraclerestaurants.com is a CNAME to
+  #   lb154245-fra-marr3-ohra-p.oracleindustry.com  (147.154.134.201)
+  # i.e. Frankfurt region, "marr3" tenant, OHRA = Oracle Hospitality
+  # Reporting & Analytics, production. The R&A app itself therefore very
+  # likely lives on a sibling *.oracleindustry.com host — confirm from the
+  # address bar after one manual sign-in rather than guessing.
+  login_url: "https://ors-idm.marr3.oraclerestaurants.com/oidc-ui/?ojr=login"
+  # ✅ DISCOVERED 2026-09-04 by completing one sign-in. OIDC redirects here.
+  portal_url: "https://simphony-home.marr3.oraclerestaurants.com/MH/portal/"
+  # ✅ The direct report URL, read from the address bar with the report open.
+  #    "MH" is the enterprise short code; 100648 is this report's id.
+  #    Going straight here skips BOTH the Favourites click and the tile click,
+  #    exactly as the Independent tenant's reportAction.do URL does. Verified:
+  #    the page renders with data and the Download button present.
+  report_url: "https://simphony-home.marr3.oraclerestaurants.com/MH/portal/?ojr=reports%2FmyReports%2F100648"
+  # Element that only exists once authenticated. The nav bar in every
+  # screenshot carries these tabs, so this is a safe candidate — but it has
+  # not been checked against a live session.
+  # ✅ Post-login title is "My Reports | Reports | Marriott".
+  authenticated_element: "text=My Reports"
+
+# Keeps this tenant's cookies out of the Independent tenant's jar.
+# Without it both configs would share state/storage_state.json and the second
+# run would inherit the first tenant's session.
+state_namespace: "symphony"
+
+# -------------------------------------------------------
+# CREDENTIALS — names only. Never put a secret in this file.
+# Set them with:  .venv/bin/python set_credential.py --partner symphony
+# -------------------------------------------------------
+auth:
+  username_env: "SYMPHONY_USERNAME"
+  # ✅ REQUIRED here — the sign-in page has an "Enterprise name" field.
+  company_env: "SYMPHONY_COMPANY"
+  password_env: "SYMPHONY_PASSWORD"
+  # ✅ MEASURED 2026-09-04. This is an Oracle JET app: the two inputs and the
+  #    Next button are rendered by JS and did not exist in the DOM until
+  #    between 8s and 12s after domcontentloaded (0 inputs at 2/5/8s, 2 inputs
+  #    at 12s). The engine's former hardcoded 10s raced that boundary, so a
+  #    daily run would have failed intermittently for no visible reason.
+  field_timeout_ms: 45000
+  # ✅ MEASURED 2026-09-04. The portal landing page needs ~15s to paint, so the
+  #    engine's former hardcoded 5s session check declared a perfectly good
+  #    cached session invalid, re-ran the login, and then failed filling the
+  #    enterprise field (readonly once the IdP has advanced past step 1).
+  session_check_timeout_ms: 40000
+
+# -------------------------------------------------------
+# LOGIN FIELD SELECTORS
+# ✅ CAPTURED 2026-09-04 via debug_selectors.py --portal symphony
+#    (form inspected only — no login was attempted).
+#
+# ⚠️  Do NOT use the ids debug_selectors suggested. Oracle JET renders them as
+#     'user-name-input|input' / 'org-name-input|input', and the "|" is not
+#     valid in a CSS id selector — Playwright rejects it outright with
+#     'Unexpected token "|" while parsing css selector'. The name attribute is
+#     clean and resolved to exactly 1 element for every field (same lesson as
+#     partners/ordit.yaml: prefer name over generated ids).
+# -------------------------------------------------------
+selectors:
+  username_field: "input[name='user-name-input']"     # ✅ count=1, "Email or user name"
+  company_field: "input[name='org-name-input']"       # ✅ count=1, "Enterprise name"
+  # ✅ Two-step IdP: the first page has NO password input. Filling the two
+  #    fields enables the Next button (it is disabled until then), which
+  #    reveals the password page.
+  username_submit_button: "button:has-text('Next')"   # ✅ count=1
+  # ✅ CAPTURED 2026-09-04 by advancing past step 1 with the real username +
+  #    enterprise. No password was submitted during discovery, so no
+  #    failed-login attempt was made against the password.
+  #    On page 2 the enterprise input goes hidden and a password input appears.
+  password_field: "input[name='password-input']"      # ✅ count=1, type=password
+  # ✅ count=1. NOT "button:has-text('Sign In')" — Playwright's :has-text() is
+  #    a case-insensitive SUBSTRING match, so it also matches the adjacent
+  #    "Can't sign in?" button and resolves to 2 elements. :text-is('Sign In')
+  #    on the button matches 0, because JET nests the label in a child
+  #    <span class="oj-button-text">; matching that span is what works.
+  #    Alternative if Oracle restyles the label:
+  #      button[aria-labelledby^='signinBtn']   (also count=1, but depends on
+  #      JET's generated id prefix 'signinBtn_ojN')
+  login_button: "button:has(span.oj-button-text:text-is('Sign In'))"
+  # ✅ Observed 2026-09-04 on a rejected step-1 submission: a red panel reading
+  #    "Invalid entry / Please check your input and try again."
+  login_error: "text=Invalid entry"
+  # NOTE both the Next and Sign In buttons render `disabled` until their
+  # fields are filled, so fill-then-click is the required order (which is
+  # what stage_auth already does).
+
+# -------------------------------------------------------
+# NAVIGATION CHAIN
+# Derived from the manual's Figures 1-5. Selectors are text-based because the
+# figures show labels, not markup — no DOM was inspected, so every one is
+# marked VERIFY. automation.py requires a "wait" on every step except the
+# last; the last step is the one that arms the download handler.
+#
+# Steps 3-4 of the manual (Edit Parameters -> set dates) are intentionally
+# ABSENT: Figure 3 shows the saved parameter set already defaults to
+# "Parameter Name: Default, Business Dates: Yesterday", which is exactly what
+# a daily 'yesterday' run needs. The report runs on open. Add an
+# Edit-Parameters step only if a backfill for an arbitrary date is required.
+# -------------------------------------------------------
+navigation:
+  # ✅ VERIFIED end-to-end 2026-09-04: with report_url set, the engine lands
+  #    directly on the rendered grid (parameter bar shows "Business Dates:
+  #    Yesterday", a "Totals:" row is present), so the manual's Favourites and
+  #    tile steps are unnecessary. Only the export remains.
+  #
+  #    The Edit-Parameters step is also unnecessary for a daily run: the saved
+  #    parameter set defaults to Yesterday. Add it only for a backfill.
+  - step: "Open download menu"
+    click: "button:has(span.oj-button-text:text-is('Download'))"   # ✅ count=1
+    wait: "text=Microsoft Excel (.xlsx)"                            # ✅ count=1
+
+  # Final step — arms expect_download(). The menu also offers
+  # "Comma-Separated Values (csv)" if a csv is ever preferred.
+  - step: "Download as Excel"
+    click: "text=Microsoft Excel (.xlsx)"
+    wait: null
+
+# -------------------------------------------------------
+# COLUMN MAPPING
+# Copied verbatim from config.yaml (the Independent tenant), where this exact
+# mapping is already in production against the same Oracle report. The manual's
+# Figures 3-5 confirm every raw header below is present in the Symphony grid.
+# -------------------------------------------------------
+columns:
+  - raw: "Menu Item Name"
+    target: "POS Item Name"
+    dtype: str
+
+  - raw: "Menu Item #"
+    target: "POS Item ID *"
+    dtype: int
+
+  - raw: "Qty Sold"
+    target: "Sold QTY *"
+    dtype: int
+
+  - raw: "Discounts"
+    target: "Total Discount Value"
+    dtype: float
+
+  - raw: "Net VAT After Disc."
+    target: "Total sales excl. tax *"
+    dtype: float
+
+  - raw: "Gross After Disc."
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  # Injected — not present in the raw export
+  - raw: null
+    target: "Sales Date *"
+    dtype: date
+    inject: business_dates_metadata   # read from the export's metadata row
+
+  - raw: null
+    target: "Order ID"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sales Type Code"
+    dtype: str
+    inject: empty
+
+  # Present in the raw export, excluded from the Supy upload
+  - raw: "Menu Item Def"
+    target: null
+    drop: true
+
+  - raw: "Price Level"
+    target: null
+    drop: true
+
+  - raw: "Returns"
+    target: null
+    drop: true
+
+  - raw: "Net VAT Before Disc."
+    target: null
+    drop: true
+
+  - raw: "Discounts VAT"
+    target: null
+    drop: true
+
+  - raw: "Gross Before Disc."
+    target: null
+    drop: true
+
+  # ✅ ADDED 2026-09-04 after inspecting a real export. The Symphony xlsx has
+  #    two BLANK header cells (raw column positions 6 and 10) used as visual
+  #    spacers between the VAT and Gross column groups. pandas names them
+  #    "Unnamed: 6" / "Unnamed: 10", and automation.py appends any column it
+  #    was not told about to the END of the output (see the `extras` line in
+  #    stage_transform). Without these drops the upload file carried 11
+  #    columns instead of 9, with two junk trailing columns.
+  - raw: "Unnamed: 6"
+    target: null
+    drop: true
+
+  - raw: "Unnamed: 10"
+    target: null
+    drop: true
+
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+
+# ✅ CORRECTED 2026-09-04 against a real export. The metadata row reads
+#    "Business Dates | 9/3/2026" for a 3-Sep-2026 run, i.e. M/D/YYYY — NOT the
+#    d/m/Y the Independent tenant uses. Inheriting %d/%m/%Y would have parsed
+#    that as 9 March, six months out, and would have looked correct on any day
+#    after the 12th of a month.
+raw_date_format: "%m/%d/%Y"
+output_date_format: "%d-%b-%Y"
+
+# -------------------------------------------------------
+# OUTPUT FILE NAMING
+# filename_date: sales -> name the file after the date the ROWS describe, not
+# the date the job ran. Opt-in per config; automation.py defaults to "run" so
+# the Independent tenant's filenames are unchanged. See the note in the header.
+# -------------------------------------------------------
+output:
+  filename_prefix: "symphony_sales"
+  filename_date: "sales"
+
+# -------------------------------------------------------
+# STAGE 4 — EMAIL
+# ✅ ENABLED 2026-09-07, once the locations question above was settled.
+#
+# recipient_env names a per-tenant env var so this tenant's audience is
+# independent of the Independent tenant's REPORT_RECIPIENT. Falls back to
+# REPORT_RECIPIENT, then GMAIL_USER, if unset. Comma-separated lists are
+# supported and are now split correctly before sendmail (they previously went
+# out as one malformed address — see _resolve_recipients in automation.py).
+#
+# scope is stated explicitly in the body because the export carries NO location
+# column: whoever uploads this needs to know from the email which property it
+# covers, since the file itself cannot tell them.
+# -------------------------------------------------------
+email:
+  recipient_env: "SYMPHONY_REPORT_RECIPIENT"
+  scope: "DXBPC Four Points by Sheraton — all revenue centers (single property; this account has no other location)"
+  subject_template: "Micros Symphony — Menu Item Sales — DXBPC Four Points by Sheraton — {business_date}"
+  intro: "Please find attached the daily Micros Symphony menu item sales report for {business_date}, formatted for Supy upload."
+  signoff: "Generated automatically from Oracle Reporting & Analytics (report 100648, Menu Item Sales by Definition)."

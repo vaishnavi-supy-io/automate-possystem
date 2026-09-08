@@ -1,0 +1,119 @@
+# ============================================================
+# &Dine — per-order scraping
+# ============================================================
+# Manual process this replaces:
+#   Orders > Accepted only > Open order > Order Summary
+#   > Copy Items, Quantities & Prices
+#
+# ⚠️  Discover selectors:  python debug_selectors.py --partner anddine
+
+portal:
+  name: "&Dine"
+  base_url: "https://hub.anddine.co.uk"
+  login_url: "https://hub.anddine.co.uk/login"
+  orders_url: "https://hub.anddine.co.uk/orders"
+  authenticated_element: ""        # VERIFY
+
+auth:
+  type: password
+  username_env: ANDDINE_USERNAME
+  password_env: ANDDINE_PASSWORD
+
+selectors:
+  # ✅ CONFIRMED 2026-08-06 from the live login page (no login performed).
+  # NB: the password field is name='non-auto' — an anti-autofill trick, not a typo.
+  username_field: "input[name='email']"
+  password_field: "input[name='non-auto']"
+  login_button: "button:has-text('Login')"
+  login_error: ""                  # VERIFY — needs one failed login to observe
+  cookie_accept: ""                # no banner seen on this portal
+
+  # ✅ ALL CONFIRMED 2026-08-06 against the live logged-in portal.
+  # The orders list is a div "table", 20 rows per page, with semantically
+  # named cells: .id .reference .company .sales_contact .status .order_placed
+  # .estimated_pickup_time .delivery_date .order_total .type
+  order_rows: "div.table__body--row"
+  order_link: "a.table-link"                 # href is /orders/<id>
+  # Delivery date, NOT order-placed: an order placed 04/08 for delivery 06/08
+  # is a 06/08 sale. Swap to .order_placed if Supy should book it on order date.
+  order_date: ".block.dynamic.delivery_date"
+  status: ".block.dynamic.status"
+  # Needed for the Set-order fallback below.
+  order_total: ".block.dynamic.order_total"
+  order_reference: ".block.dynamic.reference"
+  next_page: ""                    # VERIFY — pagination control (20 rows/page)
+
+  # NOTE: .block.dynamic.reference only exists on the LIST page, so on the
+  # detail page this falls through to the numeric id from the URL (e.g. 15511).
+  # That is unique and stable, so it is fine as the Supy Order ID. Point this at
+  # the detail page's reference badge instead if you want "SAT-IVB2M" in the file.
+  order_id: ".block.dynamic.reference"
+  order_date_detail: ""
+  # The detail page opens on the "Details" tab; line items are under
+  # "Order Summary" and are present-but-hidden until it is clicked.
+  detail_tab: ".dynamic-tabs h4:text-is('Order Summary')"
+  line_item_rows: "div.item-row"           # one per line item in Order Summary
+  item_name: ".item-row__name"
+  item_qty: ".item-row__qty"               # renders as "1 ×" → parsed to 1
+  item_unit_price: ".item-row__unit-price" # "£13.29 / unit Excl. VAT"
+
+filters:
+  # Only Accepted orders are real sales.
+  keep_status:
+    - "Accepted"
+
+# -------------------------------------------------------
+# ORDER-LEVEL FALLBACK — "Set" orders
+# &Dine has two detail layouts:
+#   Adhoc / Select → div.item-row     (name, "1 ×", unit price)   ← scraped normally
+#   Set (platters) → div.portion-row  (name, "18 portions", NO PRICE)
+#
+# Set orders expose no per-item pricing anywhere on the portal, only the order
+# total on the list page. Rather than drop those sales, each is booked as ONE
+# line at its order total: revenue is exact, item-level detail is not available.
+#
+# NOTE: the list's Order Total is VAT-INCLUSIVE, unlike this partner's item
+# prices which are exclusive — the engine flags these rows individually so the
+# VAT is not applied twice.
+# -------------------------------------------------------
+orders:
+  fallback_single_line: true
+  fallback_name_template: "&Dine Set Order {reference}"
+
+pagination:
+  max_pages: 20
+
+dates:
+  list_format: "%d/%m/%y"          # ✅ confirmed — e.g. "05/08/26"
+  detail_format: ""
+  default_lookback_days: 1
+
+pricing:
+  source: scraped
+  unit_price_is_per_item: true     # line total = unit price × qty
+  # ⚠️  &Dine displays prices EXCLUDING VAT ("£13.29 / unit Excl. VAT"), unlike
+  #     Feedr and Just Eat which show inclusive. Verified against order
+  #     SAT-IVB2M: 13.29 × 1.2 = £15.95, matching the list's Order Total.
+  #     So incl. tax is DERIVED here, not divided out.
+  price_includes_tax: false
+  tax_divisor: 1.2
+  # ⚠️  KNOWN LIMITATION — mixed VAT rating.
+  #     Verified on order SAT-5RKI6 (15243): the portal reports
+  #         subtotal £542.33 excl. VAT + VAT £97.79 = £640.12
+  #     Our line-item sum reproduces £542.33 EXACTLY, so the scrape is right.
+  #     But £97.79 on £542.33 is 18.03%, not 20% — &Dine baskets mix
+  #     standard-rated and zero-rated items (UK cold food is zero-rated), and
+  #     per-item VAT rates are NOT exposed in the DOM, only the order total.
+  #
+  #     A flat ×1.2 therefore overstates VAT-inclusive sales slightly
+  #     (£650.80 vs £640.12 here, +1.7%). This matches the existing MANUAL
+  #     process, which also applies a flat 1.2 to the excl. prices, so the
+  #     automation is not making things worse.
+  #
+  #     "Total sales excl. tax" is exact and is the trustworthy column.
+  #     If Supy needs incl. VAT to reconcile to the penny, the fix is to scrape
+  #     the order-level VAT figure and apportion it across lines — ask first,
+  #     since it changes the numbers finance sees.
+
+destination: "Street Food Ltd."
+output_date_format: "%d-%b-%Y"

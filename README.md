@@ -87,7 +87,7 @@ GMAIL_USER=you@supy.io
 GMAIL_APP_PASSWORD=xxxx xxxx xxxx xxxx
 
 # Report recipients
-REPORT_RECIPIENT=recipient@supy.io          # Oracle BI reports
+REPORT_RECIPIENT=vaishnavi@supy.io,csm@supy.io   # comma-separated list is supported
 SAPAPAD_REPORT_RECIPIENT=recipient@supy.io  # Sapapad reports
 ```
 
@@ -199,6 +199,688 @@ It contains the following columns in Supy's required upload order:
 | `Sales Type Code` | Empty |
 
 For Oracle BI, `POS Item ID *` comes directly from `Menu Item #` in the raw export (no lookup needed).
+
+---
+
+## All partners in one run (`run_all_partners.py`)
+
+Runs every delivery partner end to end — login, download, convert to Supy
+format, email — and finishes with one roll-up summary email.
+
+```bash
+python run_all_partners.py                             # yesterday, all partners
+python run_all_partners.py --date 2026-08-18
+python run_all_partners.py --only feedr,ordit
+python run_all_partners.py --email-to vaishnavi@supy.io --email-to csm@supy.io
+python run_all_partners.py --no-summary-email          # per-partner mails only
+```
+
+Each partner runs in its own subprocess, so one failure never stops the rest —
+a partial day beats no day. Exit codes: `0` ok, `1` auth/config, `2` scrape/nav,
+`3` transform, `4` email.
+
+**Recipients.** `REPORT_RECIPIENT` accepts a comma- or semicolon-separated list,
+and duplicates are dropped.
+
+`--email-to` overrides `REPORT_RECIPIENT` for **both** the roll-up summary and
+every per-partner report — fixed 2026-09-02. It used to reach the summary only:
+`build_command` did not forward it and the engines had no such flag, so
+per-partner reports always went to `REPORT_RECIPIENT` however it was invoked.
+Both engines now accept `--email-to` (repeatable, and each value may itself be
+a comma-separated list), and the runner passes every address through.
+
+Use `./run_streetfood.sh` rather than retyping the recipient list — it carries
+the three Street Food Ltd. addresses (vaishnavi@, charlotte@, and
+customer.care@supy.io, added 2026-09-01) and forwards any other flags:
+
+```bash
+./run_streetfood.sh --date 2026-08-31
+./run_streetfood.sh --only feedr,ordit
+```
+
+Because the flag now covers the per-partner reports too, `run_streetfood.sh`
+puts customer care on every Street Food Ltd. email without touching
+`REPORT_RECIPIENT` — so Oracle BI, Talabat, Dines and Black Bear reports are
+unaffected and no client sees another client's data.
+
+**The summary email** carries the run table in the body, attaches every `.xlsx`
+written during the run, and names any partner that produced no file so it is
+obvious what still has to be uploaded by hand:
+
+```
+  Partner              Result             Time
+  -------------------- -------------- --------
+  deliveroo            OK ok               41s
+  feedr                OK ok               88s
+  ordit                !! scrape/nav       12s
+
+!! These partners did NOT produce a file and must be uploaded by hand:
+     - ordit (scrape/nav)
+```
+
+**Credentials** live in `.env` only — never in a config file, a spreadsheet or a
+chat message. Use `set_credential.py` to write them without echoing them to the
+terminal. Each partner reads `<PARTNER>_USERNAME` / `<PARTNER>_PASSWORD`
+(`UBER_EATS_PIN` for Uber Eats).
+
+---
+
+## Black Bear Burger — Deliveroo file converter (`blackbear_convert.py`)
+
+Black Bear Burger emails a single multi-tab `.xlsx` exported from the Deliveroo
+Looker report to customer care. There is no portal to scrape — this is a
+file-in / file-out converter, not a browser pipeline.
+
+```bash
+python blackbear_convert.py "downloads/Items Sold 17th Aug.xlsx"
+python blackbear_convert.py in.xlsx --out-dir output/bbb --vat-rate 0.20
+python blackbear_convert.py in.xlsx --plu-file "New Deliveroo - BBB.xlsx" \
+                                    --plu-file "New Deliveroo 20ft .xlsx"
+python blackbear_convert.py in.xlsx --one-file-per-date
+python blackbear_convert.py in.xlsx --year 2026     # override tab-name year inference
+```
+
+**Source layout.** One tab per sales date (`Items Sold 17th Aug`). Row 1 is a
+merged Deliveroo restaurant name spanning three metric columns; row 2 is the
+metric labels; the final row is Looker's grand total.
+
+| Deliveroo metric | Supy column |
+|---|---|
+| `Count Orders (incl Undelivered)` | `Sold QTY *` |
+| `Item Value Sum (before discounts)` − `(after item discounts)` | `Total Discount Value` |
+| `Item Value Sum (after item discounts)` | `Total sales excl. tax *` |
+| derived: excl. tax × (1 + VAT) | `Total sales incl. tax *` |
+| `Menu Item Name` | `POS Item Name` |
+| PLU CODE sheet, matched on item name | `POS Item ID *` |
+
+Deliveroo's `Item Value Sum` figures are **net of VAT** — confirmed with the team
+on 2026-08-26 — so the after-discount value is the excl.-tax figure and VAT is
+added on top, never divided out.
+
+**PLU codes.** `POS Item ID *` comes from the team's PLU masters, matched on item
+name. The authoritative codes are the `sku-` / `mod-` scheme held on the
+`Standard Plus` and `Modifiers Plus` tabs of two workbooks in Drive (Black Bear
+Burger → POS/Sales → New Folder - Sales Upload BBB):
+
+| Workbook | Brand |
+|---|---|
+| `New Deliveroo - BBB.xlsx` | Black Bear Burger |
+| `New Deliveroo 20ft .xlsx` | 20Ft Fried Chicken |
+
+Both are needed — the two brands merge into the same Supy branches. Pass
+`--plu-file` once per workbook; the first code seen for an item wins and any
+disagreement between masters is reported rather than silently overwritten.
+
+The loader takes a tab named `PLU CODE` / `Standard Plus` / `Modifiers Plus`, or
+falls back to the only sheet in a single-sheet file. Header positions are
+sniffed, blank names and blank codes are skipped (doc step 6), numeric codes lose
+Excel's trailing `.0`, matching is case- and whitespace-insensitive, and tabs
+carrying a `Sales Date` column are skipped so a completed upload is never
+mistaken for a master. An item with no PLU code keeps the item name as its
+`POS Item ID *` and is listed in `_report.txt` — nothing is silently dropped.
+
+> **Not the Kobas numbers.** `BBB PLUs.xlsx` in the same Drive folder holds a
+> different scheme (numeric Kobas EPoS ids: `827` Black Bear, `1476` Fries).
+> That is the Kobas till export, not the Deliveroo upload scheme — confirmed
+> 2026-08-31. Do not mix the two.
+
+**Branch merging.** Several Deliveroo restaurants feed one Supy branch — the
+20Ft Fried Chicken virtual brand shares a kitchen with the Black Bear Burger
+site. Rows are summed by item name per date. The mapping lives in
+`mappings/blackbear_branches.csv`:
+
+| Deliveroo restaurants | Supy branch |
+|---|---|
+| 20Ft Fried Chicken - Boxpark + Black Bear Burger - Boxpark | Black Bear Burger Shoreditch |
+| 20Ft Fried Chicken - Brixton + Black Bear Burger - Brixton | Black Bear Burger Brixton |
+| 20Ft Fried Chicken - Camden + Black Bear Burger Camden High Street | Black Bear Burger Camden |
+| 20Ft Fried Chicken - Oxford Street + Black Bear Burger - Oxford Street | 20ft Chicken Oxford St |
+| 20Ft Fried Chicken - Paddington + Black Bear Burger - Paddington | Black Bear Burger Paddington |
+| 20Ft Fried Chicken - Westfield + Black Bear Burger - Westfield | Black Bear Burger Westfield ⚠ 20Ft leg assumed |
+| Black Bear Burger - Canary Wharf | Black Bear Burger Canary Wharf |
+| Black Bear Burger - Exmouth Market | Black Bear Burger Exmouth Market |
+| Black Bear Burger - Victoria | Black Bear Burger Victoria |
+
+An unmapped restaurant is **excluded** from the output and listed in the report
+— it never silently lands in the wrong branch.
+
+**Outputs** (`output/blackbear/<run-date>/` by default):
+
+- `BlackBearBurger_Supy_POS_Upload_<from>_to_<to>.xlsx` — **the full POS sheet**:
+  a `Read Me` tab, a `Summary` tab, and one tab per Supy branch
+- `<Supy Branch>_<from>_to_<to>.xlsx` — the same data split one file per branch
+- `_summary.csv` / `_summary.xlsx` — rows, qty and value per branch per date
+- `_report.txt` — assumptions, skipped tabs, merges, reconciliation
+
+**Emailing.** `--email` sends the combined workbook plus `_report.txt` from
+`GMAIL_USER` via Gmail SMTP. Repeat the flag for more recipients:
+
+```bash
+python blackbear_convert.py in.xlsx --email vaishnavi@supy.io --email malak@supy.io
+```
+
+**Reconciliation.** Every per-restaurant gross and net total is checked against
+Looker's own grand-total row. Quantities are deliberately *not* checked: the
+total row reports a distinct order count, so it is smaller than the sum of the
+per-item counts by design.
+
+**Known data limits** (all repeated in `_report.txt`):
+
+- `Count Orders` counts orders *containing* an item, not units sold, and
+  includes undelivered orders. A quantity measure added to the Looker look
+  would fix this at source.
+- Deliveroo exports no item IDs. `POS Item ID *` comes from the client's PLU CODE
+  sheet; without one, it falls back to the item name.
+- Tabs that carry only counts and no `Item Value Sum` columns are skipped —
+  they cannot fill the required sales columns.
+
+---
+
+## Dines — dashboard pipeline (`dines_automation.py`)
+
+Black Bear Burger's dine-in sales come from the Dines dashboard. Unlike every
+other pipeline here, **each branch is a separate login**, not a location filter
+on one account, so the run loops branch → fresh browser context → login → PIN →
+export. One branch failing never stops the others.
+
+```bash
+python dines_automation.py --list-branches
+python dines_automation.py --discover --branch canary_wharf   # dump selectors
+python dines_automation.py --branch canary_wharf --debug      # headed browser
+python dines_automation.py --all-branches                     # yesterday, every configured branch
+python dines_automation.py --all-branches --date 2026-08-30
+python dines_automation.py --from-file downloads/raw.csv --branch victoria
+```
+
+**The manual process it replaces:** `Reports → enter manager PIN → Reporting →
+Sales By Product → date: Yesterday → Export`. That chain lives in
+`dines_config.yaml` under `navigation`, using the same action vocabulary as the
+Sapapad config plus one addition, `enter_pin`.
+
+**Branches** — all nine Supy branches are configured. A branch runs only when
+its three `.env` keys are present; `--all-branches` reports the rest as
+`no_creds` and carries on, so the daily run never fails over a branch that is
+not set up yet and no browser is launched for one.
+
+| Key | Supy branch | `.env` keys | Credentials |
+|---|---|---|---|
+| `canary_wharf` | Black Bear Burger Canary Wharf | `DINES_CW_USERNAME` / `_PASSWORD` / `_PIN` | ✅ on file |
+| `victoria` | Black Bear Burger Victoria | `DINES_VIC_*` | ✅ on file |
+| `oxford` | 20ft Chicken Oxford St | `DINES_OS_*` | ✅ on file |
+| `paddington` | Black Bear Burger Paddington | `DINES_PD_*` | ✅ on file |
+| `shoreditch` | Black Bear Burger Shoreditch | `DINES_SH_*` | ⏳ needed |
+| `brixton` | Black Bear Burger Brixton | `DINES_BX_*` | ⏳ needed |
+| `camden` | Black Bear Burger Camden | `DINES_CM_*` | ⏳ needed |
+| `exmouth_market` | Black Bear Burger Exmouth Market | `DINES_EM_*` | ⏳ needed |
+| `westfield` | Black Bear Burger Westfield | `DINES_WF_*` | ⏳ needed |
+
+`python dines_automation.py --list-branches` prints that last column live, and
+`python set_credential.py --list` shows it per key — key names only, never a
+value.
+
+> The five branches awaiting credentials were added on 2026-09-01 to cover all
+> nine. They were previously believed **Deliveroo-only**; listing a branch here
+> asserts nothing about whether it is actually on Dines. Confirm that with the
+> team before chasing a login for it — and note the Deliveroo converter already
+> covers all nine branches independently, so a branch that is not on Dines is
+> not a gap in coverage.
+
+Bring one online with:
+
+```bash
+python set_credential.py --partner dines_sh    # prompts for user, password, PIN
+```
+
+Write credentials with `set_credential.py` so they are never echoed to the
+terminal, shell history or a transcript. They are read from `.env` only — never
+put a username, password or PIN in a config file, a spreadsheet or a chat
+message. Bulk `--dines-table` loading only recognises the four Market Hall
+branches (identified by their `mh**` username token); the other five must be
+set one at a time until a real username for each has been seen, because
+guessing that token would file one branch's password under another.
+
+### Daily automation (added 2026-09-02)
+
+Two runners, because one of them cannot fire yet:
+
+| | File | Schedule | State |
+|---|---|---|---|
+| GitHub Actions | `.github/workflows/dines_daily.yml` | `0 6 * * *` (07:00 London BST) | ⛔ blocked — see below |
+| Local cron | `run_dines.sh` | whatever you put in `crontab` | ✅ works today |
+
+**The GitHub Actions route is blocked and it is not the workflow's fault.**
+Every scheduled workflow on this repo currently reports
+`disabled_inactivity`, because GitHub measures activity on what is **pushed**
+and `origin/main` has not moved since **2026-06-18**. All of the Talabat,
+Black Bear, Dines and Deliveroo work sits in unpushed local commits. So:
+
+```bash
+gh workflow list --all          # confirm the disabled_inactivity state
+gh workflow enable <id>         # re-enable each one you want
+git push origin main            # required, or they are disabled again in 60 days
+```
+
+That is also what silently killed the BMD/Sapapad daily reports after 18 Aug.
+
+**Secrets the workflow needs** (Settings → Secrets → Actions). Twelve for the
+four branches with logins, plus three shared:
+
+```
+DINES_CW_USERNAME   DINES_CW_PASSWORD   DINES_CW_PIN
+DINES_VIC_USERNAME  DINES_VIC_PASSWORD  DINES_VIC_PIN
+DINES_OS_USERNAME   DINES_OS_PASSWORD   DINES_OS_PIN
+DINES_PD_USERNAME   DINES_PD_PASSWORD   DINES_PD_PIN
+GMAIL_USER          GMAIL_APP_PASSWORD  DINES_REPORT_RECIPIENT
+```
+
+The five branches awaiting credentials need **no** workflow change — absent
+keys are reported as `no_creds` and skipped, so the run stays green. Add a
+branch's three secrets and it joins the next run by itself.
+
+**Until the push happens**, install the local runner instead:
+
+```bash
+crontab -e
+0 7 * * *  /Users/macbook/supy/supy-ai-agents/automate-possystem/run_dines.sh
+```
+
+Note the machine has to be awake at 07:00 for cron to fire — which is the
+reason to prefer Actions once the repo is pushed.
+
+**Both routes** retry once with `--force-login` before giving up, and on a
+double failure email an alert saying the sales must be uploaded by hand. The
+Actions run also attaches the run log, screenshots and raw CSVs as a
+`dines-failure-diagnostics` artifact, kept 14 days.
+
+**Field mapping** (from the client's documented process):
+
+| Dines column | Supy column |
+|---|---|
+| `Product` | `POS Item Name` |
+| `Qty` | `Sold QTY *` |
+| `Gross Product Sales` | `Total sales incl. tax *` |
+| derived: incl. tax ÷ 1.2 | `Total sales excl. tax *` |
+| fixed `0` | `Total Discount Value` |
+
+> **VAT runs the opposite way to Deliveroo.** Dines reports a VAT-**inclusive**
+> figure, so excl. tax is obtained by **dividing** by 1.2. Deliveroo reports net
+> and **multiplies**. Swapping them changes every money column while quantities
+> and discounts look untouched, so the two configs are kept separate and each
+> report states its direction.
+
+**PLU codes are settled** (2026-09-01). Dines has its **own numeric** scheme —
+not Deliveroo's `sku-` / `mod-` codes — taken from the `PLU` tab of the
+"MarketHall - BBB Sales" sheet and held in `mappings/dines_plu.csv` (167
+mappings, 135 distinct codes; 25 codes carry name aliases). `plu.file` points
+there. An item with no match keeps its name as `POS Item ID *` and is listed in
+the run log — visible rather than silently wrong. Earlier runs used the
+Deliveroo PLU sheet here; those `POS Item ID`s were wrong and must not be
+uploaded.
+
+**Selectors are verified** (2026-08-31, live login page): `<form id="login-form">`
+with `#username` / `#password` and `<button id="submit">`. The manager PIN is a
+touch **keypad** (`#pin-overlay`), not a text field, so the PIN is clicked digit
+by digit. The dashboard's date picker does nothing under automation, so the date
+is set by rewriting `start_date` / `end_date` on the report's own fetch — see
+`_install_date_route`. `--discover` re-dumps every input, button, link and form
+if the page changes, without anyone reading a password aloud.
+
+---
+
+## Daily automation — every client, 08:00 Dubai
+
+All scheduled reports run in **GitHub Actions**, not on anyone's laptop, so
+they fire whether or not a machine is awake. Every workflow is on
+`cron: "0 4 * * *"` (04:00 UTC = 08:00 Dubai) and reports **yesterday**.
+
+| Client | Workflow | Covers |
+|---|---|---|
+| BMD | `sapapad_daily.yml` | 9 UAE branches |
+| Black Bear Burger | `dines_daily.yml` | 4 Dines branches (of 9 configured) |
+| Street Food Ltd. | `streetfood_daily.yml` | `deliveroo`, `anddine`, `feedr`, `homecook` |
+| FLARE | `talabat_daily.yml` | Talabat UAE |
+
+Each one retries once with `--force-login`, then emails a failure alert saying
+the sales must be uploaded by hand, and attaches logs, screenshots and raw
+CSVs as a 14-day artifact. All support `workflow_dispatch`, so any day can be
+re-run by hand from the Actions tab; `streetfood_daily.yml` also takes optional
+`date` and `only` inputs for a targeted re-run.
+
+### ⚠️ Three things stop this working today
+
+**1. Every workflow is `disabled_inactivity`.** GitHub disables scheduled
+workflows after 60 days without repository activity, measured on what is
+**pushed** — and `origin/main` has not moved since **2026-06-18**. This is
+what silently killed BMD's reports after 18 Aug.
+
+```bash
+gh workflow list --all      # confirm the state
+gh workflow enable <id>     # for each workflow you want
+git push origin main        # REQUIRED, or they are disabled again in 60 days
+```
+
+**2. Secrets must exist in the repo** (Settings → Secrets → Actions). Shared:
+`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `REPORT_RECIPIENT`. Then per client:
+Dines needs 12 (`DINES_CW/VIC/OS/PD_USERNAME|PASSWORD|PIN`); Street Food needs
+8 (`DELIVEROO_*`, `ANDDINE_*`, `FEEDR_*`, `HOMECOOK_*` username/password);
+BMD and Talabat already have theirs.
+
+**3. There is a duplicate BMD workflow.** `daily_sapapad_report.yml` and
+`sapapad_daily.yml` share the same cron; the first has failed every day in
+~30s while the second succeeds in ~6m30s. Delete the first.
+
+### What cannot be automated in the cloud, and why
+
+| Partner | Reason |
+|---|---|
+| `just_eat`, `justeat_business` | Need `browser.cdp_endpoint` — attaching to a REAL Chrome that a human cleared Cloudflare in. A runner has no such browser, so these are laptop-bound (`start_chrome_cdp.sh`) until Just Eat's CSV Integration replaces them. |
+| `ordit` | Authenticates, but its order detail never renders under automation (verified headless **and** headed). No item-level data exists to collect. |
+| `uber_eats` | No login or scrape selectors configured yet. |
+| Black Bear Deliveroo | Arrives as an emailed Looker export; `blackbear_convert.py` is file-in/file-out. Needs an IMAP fetch (like Talabat's) before it can be scheduled. |
+
+`homecook` and `justeat_business` also stop at Stage 3 until wholesale prices
+are in `mappings/menu_prices.csv` — they scrape correctly, they just refuse to
+upload rows priced at zero.
+
+### Local fallbacks
+
+`run_dines.sh` and `run_streetfood.sh` exist for running from the laptop, and
+are the only option for the CDP-bound partners. They need the machine awake,
+which is exactly why Actions is the primary route.
+
+## VAT treatment — the rule and every pipeline's direction
+
+**Confirmed by Charlotte, 2026-09-03:**
+
+> "That's the standard calculation for UK accounts if you only have tax
+> inclusive. So yes please use that to attain tax exclusive sales."
+
+Read the condition, not just the number. The rule is **not** "always divide by
+1.2". It has three branches:
+
+| What the source gives you | What we do |
+|---|---|
+| **Gross only** | `excl = incl / 1.2` |
+| **Net** | `incl = excl * 1.2` |
+| **Both figures** | derive nothing — copy both |
+
+That third branch matters: deriving a number you were already given is a
+chance to introduce an error for no benefit.
+
+### Every pipeline, audited 2026-09-03
+
+| Pipeline | Source | Direction | Rate | Evidence |
+|---|---|---|---|---|
+| Dines (Black Bear) | gross only | **÷** | 1.2 | ratio exactly 1.2000 across all 4 branches shipped 02-09 |
+| Deliveroo Partner Hub (Street Food) | gross | **÷** | 1.2 | 13.95 → 11.62 in the file emailed 02-09 |
+| Deliveroo Looker email (`blackbear_convert.py`) | **net** | **×** | 1.2 | team-confirmed 2026-08-26 |
+| &Dine | **net** ("Excl. VAT" on screen) | **×** | 1.2 | order SAT-IVB2M: 13.29 × 1.2 = 15.95 = order total |
+| Feedr | gross | **÷** | 1.2 | 7.47 ÷ 1.2 = 6.22 in the file emailed 02-09 |
+| HomeCook | lookup `price_inc_tax` | **÷** | 1.2 | column is inc-tax by definition |
+| JustEat Business | lookup `price_inc_tax` | **÷** | 1.2 | same lookup sheet |
+| Just Eat | gross (customer prices) | **÷** | 1.2 | config; pipeline not yet running |
+| Ordit | ⚠️ **assumed** gross | **÷** | 1.2 | **UNVERIFIED — see below** |
+| Talabat (UAE) | gross | **÷** | **1.05** | UAE VAT is 5%, not 20% |
+| Sapapad / BMD (UAE) | **both** | none | n/a | CSV has `Total Amount Excluding Tax` and `Total Amount` |
+
+### Two traps this audit exposed
+
+**1. The two Deliveroo pipelines run OPPOSITE directions — both correctly.**
+`blackbear_convert.py` reads a Looker email export whose values are net and
+**multiplies**; `deliveroo_automation.py` reads Partner Hub's Items Sold report
+whose prices are gross and **divides**. Same brand, two reports. `dines_config.yaml`
+used to state flatly that "Deliveroo reports NET and we MULTIPLY", which is now
+corrected — believing it would have flipped the Partner Hub pipeline.
+
+**2. Ordit's direction has never been verified.** It sets no
+`price_includes_tax`, so the code default (gross → divide) applies. But &Dine —
+the other B2B catering marketplace here — displays prices **excluding** VAT. If
+Ordit does the same, we divide a net figure and understate both money columns.
+Flagged in `partners/ordit.yaml`; settle it by opening one Ordit order and
+checking whether its line prices sum to the order total as-is.
+
+### Locked by tests
+
+`tests/test_vat_direction.py` (17 tests) pins each pipeline's direction, the
+UAE rate, the fact that Sapapad derives nothing, and that the two Deliveroo
+pipelines disagree on purpose — so "tidying" one to match the other fails
+loudly. It also asserts the arithmetic against rows actually shipped on
+2026-09-02.
+
+## Attaching to a real Chrome (`browser.cdp_endpoint`)
+
+Some portals block **any** Playwright-launched browser. Measured against
+`partner-hub.just-eat.co.uk` on 2026-09-02:
+
+| Route | Result |
+|---|---|
+| headless + saved `storage_state` | held at the challenge |
+| headless + persistent profile | 90s, never cleared |
+| **headed** + persistent profile | 60s, never cleared |
+
+Cloudflare is detecting the automation driver, not headlessness — a visible
+real-window Chrome driven by Playwright is blocked identically, and it never
+presents the checkbox, so "have a human tick it once" is not available either.
+
+The workaround is to **attach to a Chrome a person logged into**, which has a
+genuine fingerprint and a live clearance cookie:
+
+```bash
+./start_chrome_cdp.sh                    # opens Chrome with remote debugging
+# log into the portal in that window, then leave it open
+.venv/bin/python partner_scraper.py --partner just_eat
+```
+
+Set `browser.cdp_endpoint: "http://localhost:9222"` in the partner config, or
+`PARTNER_CDP_ENDPOINT` for one run. When set, the scraper connects over CDP,
+**reuses the browser's existing context** (a fresh one would not share the
+clearance) and **only detaches** at the end — it never closes a browser it did
+not launch. Smoke-tested: attach, drive a tab, detach, Chrome still alive.
+
+**How much human involvement this removes.** Runs after the first need nobody
+present: the persistent profile keeps clearance and session for days. But the
+FIRST login is manual, and someone re-logs in when the session lapses. It also
+cannot run on GitHub Actions — there is no Chrome to attach to — so this
+partner is tied to a machine with a real browser.
+
+The durable fix remains Just Eat's own **CSV Integration / JET Connect** (see
+the research notes): no browser, nothing to detect, nothing to re-log-in.
+
+## Street Food Ltd. portal status (2026-09-08)
+
+Re-measured 2026-09-08. The previous table was stale in two places: Deliveroo
+and JustEat Business were both listed as blocked on selectors, and both were
+already working.
+
+| Partner | State | Blocker |
+|---|---|---|
+| `anddine` | ✅ working | — |
+| `feedr` | ✅ working | — (see the pagination note below) |
+| `deliveroo` | ✅ working | — (verified end to end 2026-09-04, 5 rows emailed) |
+| `justeat_business` | ✅ **scrapes unattended** | Needs 21 prices in `mappings/justeat_business_prices.csv` |
+| `homecook` | ✅ scrapes correctly | Needs 4 wholesale prices in `mappings/homecook_prices.csv` |
+| `ordit` | ✅ **working, via the portal's JSON API** | — (see below) |
+| `just_eat` | ❌ | Cloudflare; needs a human-seeded profile — see below |
+| `uber_eats` | ❌ | SMS one-time code; no unattended LOGIN exists |
+
+### Ordit — solved by reading the API, not the DOM (2026-09-08)
+
+The "no item-level data exists" conclusion above was wrong. It is unreachable
+through the **DOM** — but `coreapi.ordit.co.uk` serves it freely:
+
+```
+GET /api/v1/orders/v2?requiredDeliveryTime[after]=…&[before]=…   → order list
+GET /api/v1/orders/{id}                                          → meals[] with items
+```
+
+`/orders/v2/{id}`, `/orders/{id}/items` and `/order-items?order={id}` all 404 —
+`/orders/{id}` is the only detail route. A browser still runs, but only to
+capture the Bearer token the SPA sends; nothing is read off the page, so there
+are **no selectors to rot**. Driven by `api.enabled` in `partners/ordit.yaml`.
+
+Two further claims in that config were also wrong: August was not empty
+(06-Aug OC-MTYZ-1291 is £44.40), and `status=new` is not a limitation —
+arbitrary date ranges work, and the SPA itself uses them.
+
+Verified end to end: 14 orders → 37 line items → £495.30 gross / £412.75 net
+across 01-Jul–08-Sep, emailed 2026-09-08.
+
+**Use `priceWithMealOptions`, not `price`.** `price` and `supplierPrice`
+exclude PAID modifiers; `priceWithMealOptions` folds them in. Summing the
+former under-reports by exactly the modifier value. The engine re-checks every
+order against the API's own `priceSumItems` and warns if it stops reconciling.
+`children` must never become their own rows — free ones are £0 and paid ones
+are already counted, so emitting them double-counts the order.
+
+⚠️  VAT direction is still ASSUMED gross. The reconciliation proves internal
+consistency only. Circumstantial support: Ordit and Deliveroo list identical
+prices for identical items (Stir Fry Chilli & Basil, 12.95 on both) and
+Deliveroo is documented gross. One invoice showing a VAT line would settle it;
+if Ordit reports net, every money column is 20% light.
+
+### ⚠️ Automated access degrades these portals — space runs out
+
+Both `just_eat` and `justeat_business` were hit many times from one IP on
+2026-09-08 while diagnosing. Consequences, both self-inflicted:
+
+* `partner-hub.just-eat.co.uk` — a working human-seeded Cloudflare clearance
+  was destroyed by a `clear_cookies()` call and could not be re-earned.
+* `app.business.just-eat.co.uk` — authenticated and scraped 30 line items in
+  the morning, then began returning **403** after repeated probing. The host
+  serves Cloudflare RUM (`/cdn-cgi/rum`), so it is protected after all.
+
+If a partner that worked starts failing, back off for hours rather than
+retrying in a loop. Retrying is what caused this.
+
+### The two hosts do NOT share Cloudflare protection (measured 2026-09-08)
+
+`justeat_business.yaml` assumed `app.business.just-eat.co.uk` was protected
+like `partner-hub.just-eat.co.uk`, and routed it over CDP for that reason. It
+is not. Probed with a Playwright-launched persistent context:
+
+```
+app.business.just-eat.co.uk/menus/vendor/orders  -> 302 /login?forward=%2Flogin   NO challenge
+partner-hub.just-eat.co.uk/home                  -> "Performing security verification"
+```
+
+JustEat Business had simply lost its session; the expiry looked like a block
+because the CDP path failed first. With `cdp_endpoint` commented out and
+`persistent_profile: true` kept, a `--force-login` run authenticated and
+scraped 30 line items for 01-07 Sep with nobody present.
+
+### CDP attach is broken on this machine — affects `just_eat`
+
+Playwright 1.59.0 against Chrome 152 fails every `connect_over_cdp`:
+
+```
+Protocol error (Browser.setDownloadBehavior): Browser context management is not supported.
+```
+
+Reproducible with a bare three-line connect, so it is environmental, not this
+repo. `just_eat` has no other route — its Cloudflare challenge genuinely needs
+a real human-cleared Chrome — so pinning a compatible Playwright/Chrome pair is
+the prerequisite before any further work on it.
+
+### Prices are now per-partner
+
+`pricing.lookup_csv` was always per-partner config, but JustEat Business and
+HomeCook both pointed at the same `menu_prices.csv`. They must not: Street Food
+charges different prices per channel, with &Dine running ~1.6x Feedr on every
+item observed on both (Pad Thai (Chicken) 11.95 vs 7.47, Vegetable Dumplings
+6.95 vs 4.34, Bento Boxes 15.95 vs 9.97). One shared sheet silently misprices
+whichever channel it was not derived from. Split into
+`mappings/justeat_business_prices.csv` and `mappings/homecook_prices.csv`; rows
+are commented out until confirmed, so an unpriced item still fails the run.
+
+### Feedr — `max_pages: 1` is correct, not a truncation (verified 2026-09-02)
+
+An earlier note here claimed `pagination.max_pages: 1` under-reported Feedr
+backfills. **That was wrong.** Feedr has no pager: `selectors.next_page` is
+empty and the list is bounded by an on-page date filter, widened from the
+7-day default to 60 days by `selectors.list_pre_click` before collecting.
+
+Verified against the live list:
+
+```
+rows BEFORE widening: 1
+widened via "button:has-text('60 days')"
+rows AFTER widening : 11
+rows after scrolling: 11  -> no change   (so no lazy-loaded remainder)
+day groups: Today (Wed 02 Sep), Thu 27 Aug, Thu 20 Aug, Thu 13 Aug, Wed 12 Aug,
+            Fri 31 Jul, Thu 30 Jul, Wed 29 Jul, Tue 28 Jul, Thu 09 Jul
+```
+
+This supplier receives roughly one order a week, on Thursdays. For a
+27 Aug–1 Sep run the only day group in range is 27 Aug, so **one line item was
+the complete and correct answer.**
+
+What *was* broken is the alarm. `pagination_cap_hit` fired whenever
+`seen_pages >= max_pages`, which is true on every single run of a pager-less
+portal — so a correct result looked truncated and a real report got called
+incomplete. It now fires only when a next-page control genuinely exists and
+the cap stopped us from following it, i.e. only when data really was missed.
+Covered by `test_no_cap_warning_when_the_portal_has_no_pager` and
+`test_cap_warning_when_a_further_page_really_exists`.
+
+### HomeCook — implemented 2026-09-02
+
+`orders_url` pointed at `/dashboard/orders`, which has **no order table at all**;
+the producer list is at `/dashboard/my-orders`. With that corrected and the six
+selectors derived from the live DOM, the pipeline runs end to end:
+
+```
+[Stage 1] ✓ Authenticated
+[Stage 2] ✓ Scraped 1 line items
+  → {"order_id": "PO-20260819-84B", "order_date": "2026-09-01",
+     "item_name": "Chicken Satay", "qty": 100}
+```
+
+It then stops at Stage 3, correctly: **no price**. HomeCooks exposes none, so
+prices come from `mappings/menu_prices.csv`, which currently holds only
+`Chicken Satay Skewers`, `Pad Thai` and `Thai Green Curry` — none of which match
+the four products actually ordered:
+
+- `Chicken Satay`
+- `Tofu Satay (VG)`
+- `Thai Green Chicken Curry`
+- `Tofu Thai Green Curry with Jasmine Rice (VG)`
+
+Note these are **wholesale production POs** (quantities of 100–200 units), so the
+retail menu price is probably the wrong number — confirm the per-unit wholesale
+price with the client rather than assuming the existing rows are typos. Once the
+sheet has them, re-run without re-scraping:
+
+```bash
+python partner_scraper.py --partner homecook --date 2026-09-01 --from-scraped
+```
+
+### Ordit — authentication fixed, item detail not reachable
+
+Login now works (it was pointed at the buyer-side door; see `partners/ordit.yaml`).
+The order **list** reads fine — 6 orders for August, with reference, customer,
+timestamp, total and item count. Item-level detail is the problem:
+
+- Clicking an order changes the route to `/orders/history/{period}/OC-{ref}-{restaurantId}`
+  but **renders no detail** in a headless context — after `networkidle` plus 10s
+  the page body is 742 characters and contains no product names at all.
+- Navigating straight to that URL just re-renders the list.
+- `PRINT SUMMARY` / `PRINT ITEM LABELS` trigger print flows, not DOM dialogs.
+- The per-order **EXPORT** button downloads `orders.csv` — but it is
+  **order-level**, covering every order in the filtered view:
+
+  ```
+  id,restaurantProfile,status,deliveryDate,priceSumItems,deliveryFeeGross,total
+  OC-MTYZ-1291,"Satay Street - Aldgate",Confirmed,"2026-08-06 12:30:00",44.4,0,44.4
+  ```
+
+So Ordit can deliver **order totals reliably today** (one CSV per date range, no
+DOM selectors, immune to selector rot) but **not an item breakdown**. Choosing
+between order-level ingestion via `orders.fallback_single_line` and chasing
+item-level detail is a data-quality decision for the team, not a code one.
+
+Two modal notes for whoever picks this up: the notification prompt needs **two**
+clicks ("I'm not managing orders", then "Ok" on the confirm), and it blocks
+clicks but **not** reads — so a read-only scrape can ignore it entirely.
 
 ---
 

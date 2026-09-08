@@ -30,18 +30,48 @@ selectors:
 #   download_latest  — click first download link; polls page up to poll_attempts
 #                      times (with poll_interval_s between each) if not found yet
 # -------------------------------------------------------
-navigation:
-  # Step 1 — open the date picker dropdown
-  - step: "Open date filter"
-    action: click
-    click: ".dateFilterToggle"
-    wait: "a.customDateSelection"
+# -------------------------------------------------------
+# DATE FILTER
+# The dashboard's filter offers Today / Yesterday / This week / This Month /
+# Last Month / Custom. Backfills use Custom, whose two text inputs accept
+# typed values.
+#
+# ⚠️  A SAPAAD BUSINESS DAY RUNS 04:00 -> 04:00, NOT MIDNIGHT. Selecting
+#     "Today" on 3 Sep populates from_date "03/09/2026 04:00:00" and to_date
+#     "04/09/2026 04:00:00" — so late-night trade books to the previous day.
+#     A backfill that used midnight boundaries would silently disagree with
+#     the portal's own totals. The time component is READ BACK from whatever
+#     the portal has already put in the field rather than hardcoded, so this
+#     stays correct if the client's day boundary is ever changed.
+# -------------------------------------------------------
+date_filter:
+  toggle: ".dateFilterToggle"
+  option_template: "a.customDateSelection:has-text('{label}')"
+  yesterday_label: "Yesterday"
+  custom_label: "Custom"
+  # Stable element ids, preferred over matching on visible text.
+  yesterday_option: "#dr_yesterday"
+  custom_option: "#dr_custom"
+  from_field: "#from_date"
+  to_field: "#to_date"
+  apply_button: ".applyFilterButton"
+  # Format of the two inputs, confirmed 2026-09-03 from their live values.
+  input_format: "%d/%m/%Y %H:%M:%S"
+  # Fallback only, if the field is empty and no time can be read back.
+  default_day_start: "04:00:00"
 
-  # Step 2 — select Yesterday (auto-applies, no separate Apply button needed)
-  - step: "Select Yesterday"
-    action: click
-    click: "a.customDateSelection:has-text('Yesterday')"
-    wait: ".dateFilterToggle:has-text('Yesterday')"
+navigation:
+  # (The old separate "Open date filter" click was removed 2026-09-03:
+  #  select_date opens the dropdown itself, and clicking the toggle twice
+  #  TOGGLED IT SHUT — the options were then present but hidden, and the run
+  #  failed with "44 x locator resolved to hidden".)
+
+  # Step 2 — choose the report date.
+  # With no --date this clicks the Yesterday preset, exactly as before (the
+  # daily job keeps its proven click path). With --date it switches the filter
+  # to Custom and types the range. See select_date in sapapad_automation.py.
+  - step: "Select report date"
+    action: select_date
 
   # Step 3 — click the Excel/CSV export icon
   - step: "Click Export icon"

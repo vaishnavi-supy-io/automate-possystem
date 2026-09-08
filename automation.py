@@ -4,30 +4,26 @@ automation.py
 Oracle BI Automation Pipeline — 4-Stage Orchestrator
 
 Stage 1: Authentication   (Playwright — login + session caching)
-Stage 2: Navigation       (Playwright — report URL + Revenue Centers filter + Excel download)
+Stage 2: Navigation       (Playwright — report URL + Excel icon download)
 Stage 3: Transformation   (Pandas — raw → formatted .xlsx)
 Stage 4: Email            (smtplib — attach .xlsx and send via Gmail)
 
 Usage:
-    python automation.py                          # headless, single download (legacy mode)
-    python automation.py --all-locations          # loop all active locations from config.yaml
-    python automation.py --location "Parkers-Mirdiff"   # single named location
-    python automation.py --list-locations         # print all active locations and exit
-    python automation.py --debug                  # headed browser, verbose logging
-    python automation.py --no-email               # skip email, save locally only
-    python automation.py --from-stage 3           # replay transform only (raw file must exist)
-    python automation.py --force-login            # ignore cached session, always re-auth
+    python automation.py                 # headless, full pipeline + email
+    python automation.py --debug         # headed browser, verbose logging
+    python automation.py --no-email      # skip email, save locally only
+    python automation.py --from-stage 3  # replay transform only (raw file must exist)
+    python automation.py --force-login   # ignore cached session, always re-auth
 
 Exit codes:
-    0  success (all locations processed, or single run succeeded)
+    0  success
     1  AuthError
-    2  NavError  (single-location mode only; loop mode logs and continues)
+    2  NavError
     3  TransformError
     4  EmailError
 """
 
 import argparse
-import concurrent.futures
 import functools
 import json
 import os
@@ -65,60 +61,39 @@ SCREENSHOTS_DIR = BASE_DIR / "screenshots"
 for d in (DOWNLOADS_DIR, OUTPUT_DIR, STATE_DIR, LOGS_DIR, SCREENSHOTS_DIR):
     d.mkdir(exist_ok=True)
 
-STORAGE_STATE_PATH = STATE_DIR / "storage_state.json"
-CHECKPOINT_PATH = STATE_DIR / "checkpoint.json"
+# Which tenant config to run. This engine is not Independent-specific: any
+# Oracle Reporting & Analytics instance that exposes the same "Menu Item Sales
+# by Definition" columns can be driven by swapping this file. Resolved before
+# argparse because CONFIG is needed at import time.
+def _resolve_config_path() -> pathlib.Path:
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--config" and i + 1 < len(argv):
+            return pathlib.Path(argv[i + 1]).expanduser()
+        if a.startswith("--config="):
+            return pathlib.Path(a.split("=", 1)[1]).expanduser()
+    return pathlib.Path(os.environ.get("POS_CONFIG", "config.yaml")).expanduser()
 
-with open(BASE_DIR / "config.yaml") as _f:
+
+CONFIG_PATH = _resolve_config_path()
+if not CONFIG_PATH.is_absolute():
+    CONFIG_PATH = BASE_DIR / CONFIG_PATH
+if not CONFIG_PATH.exists():
+    raise SystemExit(f"[x] config not found: {CONFIG_PATH}")
+
+with open(CONFIG_PATH) as _f:
     CONFIG = yaml.safe_load(_f)
 
+# Each tenant gets its own cookie jar and checkpoint. Sharing one
+# storage_state.json across instances would log the second run into the
+# first one's tenant.
+_STATE_NS = CONFIG.get("state_namespace") or ""
+if _STATE_NS:
+    STATE_DIR = STATE_DIR / _STATE_NS
+    STATE_DIR.mkdir(parents=True, exist_ok=True)
 
-# ──────────────────────────────────────────────────────────────────────────────
-# Location Helpers
-# ──────────────────────────────────────────────────────────────────────────────
-
-# Supy names that indicate a location is inactive / not mappable.
-_SKIP_SUPY_NAMES: set[str] = {
-    "n/a",
-    "not in use",
-    "location closed",
-    "no sales for now",
-}
-
-
-def _is_skip(supy_name: str) -> bool:
-    """Return True when a supy_name should be excluded from processing."""
-    if not supy_name or not supy_name.strip():
-        return True
-    lower = supy_name.strip().lower()
-    if lower in _SKIP_SUPY_NAMES:
-        return True
-    if lower.startswith("location name not mentioned"):
-        return True
-    return False
-
-
-def _get_active_locations() -> list[dict]:
-    """
-    Return the list of active {pos_name, supy_name} dicts from config.yaml,
-    with all invalid supy_names filtered out.
-    """
-    all_locs = CONFIG.get("locations", [])
-    return [
-        loc for loc in all_locs
-        if not _is_skip(loc.get("supy_name", ""))
-    ]
-
-
-def _sanitize_filename(name: str) -> str:
-    """
-    Convert a Supy location name into a safe filesystem component.
-    Strips/replaces characters that are not allowed in filenames on any OS.
-    """
-    # Replace characters illegal on Windows/Linux/macOS with underscores
-    safe = re.sub(r'[\\/*?:"<>|]', "_", name)
-    # Collapse multiple spaces/underscores
-    safe = re.sub(r"[\s_]+", "_", safe).strip("_")
-    return safe or "unknown_location"
+STORAGE_STATE_PATH = STATE_DIR / "storage_state.json"
+CHECKPOINT_PATH = STATE_DIR / "checkpoint.json"
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -131,10 +106,6 @@ class AuthError(Exception):
 
 class NavError(Exception):
     """Menu navigation or download failure — retryable."""
-
-
-class NoDataError(Exception):
-    """Location had no data for this date — skip gracefully, not a failure."""
 
 
 class TransformError(Exception):
@@ -254,7 +225,13 @@ def _session_is_valid(page: Page) -> bool:
         return False
     try:
         page.goto(CONFIG["portal"]["portal_url"], wait_until="domcontentloaded", timeout=20_000)
-        page.wait_for_selector(auth_el, timeout=5_000)
+        # 5s is far too short for a JS-rendered portal: the Symphony landing
+        # page needs ~15s to paint, so a VALID session was reported invalid,
+        # the engine fell through to a fresh login, and then broke because the
+        # IdP had already advanced past its username step.
+        timeout = int((CONFIG.get("auth", {}) or {}).get(
+            "session_check_timeout_ms", 5_000))
+        page.wait_for_selector(auth_el, timeout=timeout)
         return True
     except Exception:
         return False
@@ -268,8 +245,8 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
     for key in ("username_field", "company_field", "password_field", "login_button"):
         if not sel.get(key):
             raise AuthError(
-                f"config.yaml selectors.{key} is empty. "
-                "Run debug_selectors.py first and fill in config.yaml."
+                f"{CONFIG_PATH.name} selectors.{key} is empty. "
+                f"Run debug_selectors.py first and fill in {CONFIG_PATH.name}."
             )
 
     # Attempt to reuse cached session
@@ -284,20 +261,69 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
             print("  [→] Cached session expired — re-authenticating...")
 
     # Perform login
-    username = os.environ.get("PORTAL_USERNAME", CONFIG.get("portal", {}).get("username", ""))
-    company = os.environ.get("PORTAL_COMPANY", CONFIG.get("portal", {}).get("company", ""))
-    password = os.environ.get("PORTAL_PASSWORD", "")
+    # Env var NAMES are configurable so one engine can serve several tenants
+    # without their credentials colliding. Defaults preserve the original
+    # PORTAL_* names for the Independent config.
+    _auth = CONFIG.get("auth", {}) or {}
+    _u_env = _auth.get("username_env", "PORTAL_USERNAME")
+    _c_env = _auth.get("company_env", "PORTAL_COMPANY")
+    _p_env = _auth.get("password_env", "PORTAL_PASSWORD")
+
+    username = os.environ.get(_u_env, CONFIG.get("portal", {}).get("username", ""))
+    company = os.environ.get(_c_env, CONFIG.get("portal", {}).get("company", ""))
+    password = os.environ.get(_p_env, "")
 
     if not password:
-        raise AuthError("PORTAL_PASSWORD is not set. Add it to your .env file.")
+        raise AuthError(f"{_p_env} is not set. Add it to your .env file "
+                        f"(use set_credential.py — never paste it into a config).")
 
     try:
         page.goto(CONFIG["portal"]["login_url"], wait_until="domcontentloaded", timeout=30_000)
         screenshot(page, "auth", "01_login_page")
 
-        page.wait_for_selector(sel["username_field"], timeout=10_000)
-        page.fill(sel["username_field"], username)
-        page.fill(sel["company_field"], company)
+        # Oracle JET sign-in pages (Micros Symphony) render their inputs from
+        # JS and measured 8-12s to hydrate on 2026-09-04 — the previous
+        # hardcoded 10s raced that and would flake intermittently. Tenants
+        # with a slow IdP raise auth.field_timeout_ms.
+        field_timeout = int((CONFIG.get("auth", {}) or {}).get(
+            "field_timeout_ms", 10_000))
+
+        page.wait_for_selector(sel["username_field"], timeout=field_timeout)
+
+        def _fill_if_editable(selector: str, value: str, label: str) -> None:
+            """Fill a login field, unless the IdP has already settled it.
+
+            A remembered OIDC session can land straight on the password step,
+            where the earlier inputs are still in the DOM but readonly and
+            hidden. Forcing a fill there times out for 30s and fails the run,
+            so treat an uneditable field as already-supplied.
+            """
+            loc = page.locator(selector).first
+            if not loc.is_visible() or not loc.is_editable():
+                log("auth", f"skip_{label}", "ok",
+                    extra={"reason": "field not editable — IdP pre-filled it"})
+                return
+            loc.fill(value)
+
+        _fill_if_editable(sel["username_field"], username, "username")
+        if sel.get("company_field"):
+            _fill_if_editable(sel["company_field"], company, "company")
+
+        # Two-step identity providers put the password on a second page that
+        # only appears after the username/enterprise step is submitted. When
+        # username_submit_button is set, advance and wait for the password
+        # field instead of expecting it on the first page.
+        if sel.get("username_submit_button"):
+            pwd = page.locator(sel["password_field"]).first
+            already_on_password_step = (pwd.count() > 0 and pwd.is_visible())
+            if already_on_password_step:
+                log("auth", "skip_username_step", "ok",
+                    extra={"reason": "password field already present"})
+            else:
+                screenshot(page, "auth", "02a_before_next")
+                page.click(sel["username_submit_button"])
+                page.wait_for_selector(sel["password_field"], timeout=field_timeout)
+
         page.fill(sel["password_field"], password)
         screenshot(page, "auth", "02_fields_filled")
 
@@ -337,267 +363,32 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
 
 
 # ──────────────────────────────────────────────────────────────────────────────
-# Stage 2a — Revenue Centers Location Filter
-# ──────────────────────────────────────────────────────────────────────────────
-
-def stage_set_location_filter(page: Page, pos_location_name: str) -> None:
-    """
-    Set the Revenue Centers filter on the Oracle BI report to the given
-    ``pos_location_name`` and wait for the report to be ready.
-
-    Confirmed portal structure (from debug_location_filter.py):
-      - iframe name='revenueCenterFrame' contains a jsTree dual-listbox UI
-      - Search input: #serachmaintree (portal typo intentional)
-      - Search button: input[value='Search'] (first in frame)
-      - Add button: input[value='Add']
-      - Apply button: input#btnApplySelection
-      - Tree results div: #loadlocationtreetd
-      - Main frame also has select#revenueCenterData (117 options, used as fallback)
-
-    Raises NavError if the filter cannot be applied.
-    """
-    t0 = time.monotonic()
-    report_url = CONFIG["portal"]["report_url"]
-
-    if _verbose:
-        print(f"  [→] Setting Revenue Centers filter to: {pos_location_name!r}")
-
-    # Navigate fresh each time so filter state is clean
-    page.goto(report_url, wait_until="domcontentloaded", timeout=30_000)
-    try:
-        page.wait_for_load_state("networkidle", timeout=30_000)
-    except Exception:
-        pass
-
-    filter_applied = False
-
-    # ── Primary: revenueCenterFrame jsTree search UI ──────────────────────────
-    try:
-        rc_frame = page.frame(name="revenueCenterFrame")
-        if rc_frame is None:
-            raise RuntimeError("revenueCenterFrame not found")
-
-        # The iframe panels are collapsed by default — click the header button
-        # in the main frame to expand the Revenue Centers section first.
-        try:
-            page.locator("#revenueCenterBtn").click(timeout=5_000)
-            time.sleep(1.0)
-        except Exception:
-            pass
-
-        # Wait for the search input to become interactive
-        rc_frame.wait_for_selector("#serachmaintree", state="visible", timeout=15_000)
-
-        # Clear any existing selection in the target tree
-        try:
-            clear_link = rc_frame.locator("a", has_text="Clear selection").first
-            if clear_link.count():
-                clear_link.click()
-                time.sleep(0.5)
-        except Exception:
-            pass
-
-        # Type location name into search box and click Search
-        search_input = rc_frame.locator("#serachmaintree")
-        search_input.fill("")
-        search_input.fill(pos_location_name)
-
-        rc_frame.locator("input[value='Search']").first.click(force=True)
-        time.sleep(2.0)  # give jsTree time to filter results
-
-        # Click the matching node in the source tree
-        # jsTree renders nodes as <a> elements inside #loadlocationtreetd
-        tree_div = rc_frame.locator("#loadlocationtreetd")
-        node = tree_div.get_by_text(pos_location_name, exact=True).first
-        node.click(timeout=10_000)
-        time.sleep(0.5)
-
-        # Click Add to move to selected side
-        rc_frame.locator("input[value='Add']").click(force=True)
-        time.sleep(0.5)
-
-        # Apply selection
-        rc_frame.locator("input#btnApplySelection").click(force=True)
-        time.sleep(1.5)
-
-        filter_applied = True
-        if _verbose:
-            print(f"  [✓] Revenue Centers filter applied via revenueCenterFrame jsTree")
-
-    except Exception as e:
-        if _verbose:
-            print(f"  [!] revenueCenterFrame approach failed: {e}")
-
-    # ── Fallback: select#revenueCenterData in main frame ─────────────────────
-    if not filter_applied:
-        try:
-            # select#revenueCenterData has 117 options; do fuzzy match on portal names
-            options_els = page.locator("#revenueCenterData option").all()
-            matched = None
-            pos_lower = pos_location_name.lower()
-            for opt in options_els:
-                text = opt.inner_text().strip()
-                if text.lower() == pos_lower:
-                    matched = text
-                    break
-            # Fuzzy: try stripping apostrophes/hyphens/spaces
-            if matched is None:
-                def _norm(s: str) -> str:
-                    return s.lower().replace("'", "").replace("-", "").replace(" ", "")
-                pos_norm = _norm(pos_location_name)
-                for opt in options_els:
-                    text = opt.inner_text().strip()
-                    if _norm(text) == pos_norm:
-                        matched = text
-                        break
-
-            if matched:
-                page.evaluate(
-                    """([val]) => {
-                        const sel = document.querySelector('#revenueCenterData');
-                        for (const opt of sel.options) { opt.selected = false; }
-                        for (const opt of sel.options) {
-                            if (opt.text === val) { opt.selected = true; break; }
-                        }
-                        sel.dispatchEvent(new Event('change', {bubbles: true}));
-                    }""",
-                    [matched]
-                )
-                filter_applied = True
-                if _verbose:
-                    print(f"  [✓] Revenue Centers filter applied via select#revenueCenterData "
-                          f"(matched {matched!r})")
-            else:
-                if _verbose:
-                    print(f"  [!] select#revenueCenterData: no option matched {pos_location_name!r}")
-        except Exception as e:
-            if _verbose:
-                print(f"  [!] select#revenueCenterData fallback failed: {e}")
-
-    if not filter_applied:
-        if _verbose:
-            print(f"  [!] Could not apply filter for {pos_location_name!r} — "
-                  f"report will contain all locations for this entry")
-
-    # Click "Run Report" to execute the report with the selected filter.
-    # The Excel download button only appears AFTER the report has finished running.
-    try:
-        page.locator('[id="Run Report"]').click(timeout=15_000)
-        if _verbose:
-            print(f"  [→] Clicked 'Run Report'")
-    except Exception as e:
-        if _verbose:
-            print(f"  [!] Could not click Run Report: {e}")
-
-    # Wait for the Excel download button to appear (report finished rendering).
-    # Poll every 3 s so we can detect "no data" state early instead of
-    # burning the full 120 s timeout on locations with zero sales.
-    try:
-        final_step  = CONFIG["navigation"][-1]
-        excel_sel   = final_step["click"]           # img[title='Excel (.xlsx)']
-        deadline    = time.monotonic() + 90         # max 90 s (down from 120 s)
-        no_data_js  = (
-            "() => {"
-            "  const txt = document.body?.innerText || '';"
-            "  return /no data|no rows|0 rows|there is no data/i.test(txt);"
-            "}"
-        )
-        # Also check inside any iframes
-        no_data_frame_js = (
-            "() => {"
-            "  try {"
-            "    for (const fr of document.querySelectorAll('iframe')) {"
-            "      const t = fr.contentDocument?.body?.innerText || '';"
-            "      if (/no data|no rows|0 rows|there is no data/i.test(t)) return true;"
-            "    }"
-            "  } catch(e) {}"
-            "  return false;"
-            "}"
-        )
-        while time.monotonic() < deadline:
-            if page.locator(excel_sel).is_visible():
-                break                               # ✓ report rendered with data
-            # Check main page + iframes for "no data" text
-            try:
-                if page.evaluate(no_data_js) or page.evaluate(no_data_frame_js):
-                    raise NoDataError(
-                        f"No data for {pos_location_name!r} on this date"
-                    )
-            except NoDataError:
-                raise
-            except Exception:
-                pass
-            time.sleep(3)
-        else:
-            raise NavError(
-                f"Report did not finish rendering after filter for {pos_location_name!r}: "
-                f"Excel button never became visible after 90 s"
-            )
-    except NoDataError:
-        raise                                       # bubble up — not a NavError
-    except NavError:
-        screenshot(page, "nav", f"filter_error_{_sanitize_filename(pos_location_name)}")
-        raise
-    except Exception as exc:
-        screenshot(page, "nav", f"filter_error_{_sanitize_filename(pos_location_name)}")
-        raise NavError(
-            f"Report did not finish rendering after filter for {pos_location_name!r}: {exc}"
-        ) from exc
-
-    log("nav", "set_location_filter", "ok",
-        duration_ms=int((time.monotonic() - t0) * 1000),
-        extra={"location": pos_location_name, "filter_applied": filter_applied})
-
-    screenshot(page, "nav", f"filter_set_{_sanitize_filename(pos_location_name)}")
-
-
-# ──────────────────────────────────────────────────────────────────────────────
 # Stage 2 — Navigation & Download
 # ──────────────────────────────────────────────────────────────────────────────
 
 @retry(max_attempts=3, exceptions=(NavError,))
-def stage_navigate_and_download(
-    page: Page,
-    location_name: Optional[str] = None,
-) -> pathlib.Path:
-    """
-    Navigate to the report, optionally set a Revenue Centers filter for
-    ``location_name``, then download the Excel report.
-
-    Args:
-        page:          Active Playwright page.
-        location_name: POS location name to filter by (from config.yaml locations[].pos_name).
-                       If None, downloads the unfiltered report (legacy behaviour).
-
-    Returns:
-        Path to the downloaded raw file.
-    """
+def stage_navigate_and_download(page: Page) -> pathlib.Path:
     t0 = time.monotonic()
     nav_steps = CONFIG["navigation"]
     report_url = CONFIG["portal"].get("report_url", "")
 
     try:
-        if location_name:
-            # Filter mode: set_location_filter handles navigation to the report URL
-            # and waits for the download button to appear.
-            stage_set_location_filter(page, location_name)
-        else:
-            # Legacy mode: navigate directly to the report page
-            if report_url:
-                if _verbose:
-                    print(f"  [→] Navigating directly to report URL...")
-                page.goto(report_url, wait_until="domcontentloaded", timeout=30_000)
-                # Wait for the report to fully render (reportsFrame populates asynchronously)
-                page.wait_for_load_state("networkidle", timeout=30_000)
+        # Navigate directly to the report page (bypasses portal iframe navigation)
+        if report_url:
+            if _verbose:
+                print(f"  [→] Navigating directly to report URL...")
+            page.goto(report_url, wait_until="domcontentloaded", timeout=30_000)
+            # Wait for the report to fully render (reportsFrame populates asynchronously)
+            page.wait_for_load_state("networkidle", timeout=30_000)
 
-            # Walk any intermediate steps (currently just the Excel icon click)
-            for step_cfg in nav_steps[:-1]:
-                label = step_cfg["step"]
-                page.wait_for_selector(step_cfg["click"], state="visible", timeout=30_000)
-                screenshot(page, "nav", f"before_{label.replace(' ', '_')}")
-                page.click(step_cfg["click"])
-                page.wait_for_selector(step_cfg["wait"], state="visible", timeout=30_000)
-                log("nav", label, "ok")
+        # Walk any intermediate steps (currently just the Excel icon click)
+        for step_cfg in nav_steps[:-1]:
+            label = step_cfg["step"]
+            page.wait_for_selector(step_cfg["click"], state="visible", timeout=30_000)
+            screenshot(page, "nav", f"before_{label.replace(' ', '_')}")
+            page.click(step_cfg["click"])
+            page.wait_for_selector(step_cfg["wait"], state="visible", timeout=30_000)
+            log("nav", label, "ok")
 
         # Final step — arm download handler before clicking Excel icon
         final = nav_steps[-1]
@@ -609,14 +400,9 @@ def stage_navigate_and_download(
 
         download = dl_info.value
         suffix = pathlib.Path(download.suggested_filename).suffix or ".xlsx"
-
-        # Embed sanitized location name in the raw filename for traceability
-        loc_tag = f"_{_sanitize_filename(location_name)}" if location_name else ""
-        dest = DOWNLOADS_DIR / f"{RUN_ID}{loc_tag}_raw{suffix}"
+        dest = DOWNLOADS_DIR / f"{RUN_ID}_raw{suffix}"
         download.save_as(str(dest))
 
-    except NavError:
-        raise
     except Exception as exc:
         screenshot(page, "nav", "error")
         raise NavError(f"Navigation/download failed: {exc}") from exc
@@ -627,8 +413,7 @@ def stage_navigate_and_download(
 
     log("nav", "download", "ok",
         duration_ms=int((time.monotonic() - t0) * 1000),
-        extra={"file": str(dest), "size_bytes": dest.stat().st_size,
-               "location": location_name or "all"})
+        extra={"file": str(dest), "size_bytes": dest.stat().st_size})
     write_checkpoint(2, {"raw_file": str(dest)})
     return dest
 
@@ -664,23 +449,8 @@ def _detect_header_row(raw_path: pathlib.Path) -> tuple[int, str]:
     return header_row, business_date
 
 
-def stage_transform(
-    raw_path: pathlib.Path,
-    supy_name: Optional[str] = None,
-) -> tuple:
-    """
-    Transform the raw downloaded Excel into the formatted output .xlsx.
-
-    Args:
-        raw_path:  Path to the raw downloaded file.
-        supy_name: Supy location label (from config.yaml locations[].supy_name).
-                   When provided, the output file is named
-                   ``{sanitized_supy_name}_{date}.xlsx`` and the date is derived
-                   from the report metadata.  Falls back to the legacy name when None.
-
-    Returns:
-        (out_path, row_count, business_date_display_str)
-    """
+def stage_transform(raw_path: pathlib.Path) -> tuple:
+    """Returns (out_path, row_count, business_date_str)."""
     t0 = time.monotonic()
 
     try:
@@ -697,10 +467,8 @@ def stage_transform(
         else:
             df = pd.read_csv(raw_path, header=header_row, on_bad_lines="skip")
 
-        # Strip whitespace from column names and drop unnamed/empty columns
+        # Strip whitespace from column names
         df.columns = [str(c).strip() for c in df.columns]
-        df = df.loc[:, ~df.columns.str.startswith("Unnamed:")]
-        df = df.loc[:, df.columns != ""]
 
         # Drop aggregate "Totals:" rows — identified by NaN in "Menu Item #"
         df = df[df["Menu Item #"].notna()].copy()
@@ -769,19 +537,34 @@ def stage_transform(
         final_order = CONFIG.get("output_column_order", [])
         # Keep only columns that exist in df, in the specified order
         ordered = [c for c in final_order if c in df.columns]
-        # Append any unexpected extra columns (skip unnamed/empty)
-        extras = [c for c in df.columns if c not in ordered and not c.startswith("Unnamed:") and c != ""]
+        # Append any unexpected extra columns at the end
+        extras = [c for c in df.columns if c not in ordered]
         df = df[ordered + extras]
 
         # ── Export ────────────────────────────────────────────────
-        today = datetime.now().strftime("%Y-%m-%d")
-
-        if supy_name:
-            safe_name = _sanitize_filename(supy_name)
-            out_path = OUTPUT_DIR / f"{safe_name}_{today}.xlsx"
-        else:
-            out_path = OUTPUT_DIR / f"sales_report_{today}_{RUN_ID[:8]}.xlsx"
-
+        # The date in the filename used to be TODAY, not the date the rows
+        # actually describe, so a 4-Sep run of 3-Sep sales was filed as
+        # sales_report_2026-09-04 — the same defect fixed in
+        # sapapad_automation.py on 2026-09-03. Fixing it unconditionally would
+        # rename the Independent tenant's output too and could break whatever
+        # consumes it, so the sales-date naming is opt-in per config and the
+        # run-date default is preserved untouched.
+        out_cfg = CONFIG.get("output", {}) or {}
+        prefix = out_cfg.get("filename_prefix", "sales_report")
+        date_part = ""
+        if out_cfg.get("filename_date", "run") == "sales":
+            parsed = pd.to_datetime(
+                business_date,
+                format=CONFIG.get("raw_date_format", "%d/%m/%Y"),
+                errors="coerce",
+            )
+            if pd.notna(parsed):
+                date_part = parsed.strftime("%Y-%m-%d")
+        if not date_part:
+            # Unparseable business date, or filename_date: run. Either way the
+            # run date is the safe fallback — never emit a file with no date.
+            date_part = datetime.now().strftime("%Y-%m-%d")
+        out_path = OUTPUT_DIR / f"{prefix}_{date_part}_{RUN_ID[:8]}.xlsx"
         df.to_excel(str(out_path), index=False, engine="openpyxl")
 
     except (KeyError, ValueError, TypeError) as exc:
@@ -791,8 +574,7 @@ def stage_transform(
 
     log("transform", "export", "ok",
         duration_ms=int((time.monotonic() - t0) * 1000),
-        extra={"output": str(out_path), "rows": len(df),
-               "location": supy_name or "all"})
+        extra={"output": str(out_path), "rows": len(df)})
     write_checkpoint(3, {"output_file": str(out_path)})
 
     if _verbose:
@@ -814,51 +596,86 @@ def stage_transform(
 # Stage 4 — Email
 # ──────────────────────────────────────────────────────────────────────────────
 
-def stage_email(
-    out_path: pathlib.Path,
-    row_count: int,
-    business_date: str,
-    location_label: Optional[str] = None,
-) -> None:
+def _resolve_recipients() -> list:
+    """Recipient list, most specific env var first.
+
+    Two things this fixes over reading REPORT_RECIPIENT directly:
+
+    1. SPLITTING. REPORT_RECIPIENT has always been documented as a
+       comma-separated list (README) and holds two addresses in practice, but
+       this function's caller used to hand the raw string to sendmail(). When
+       to_addrs is a str, smtplib wraps it in a ONE-element list, so the whole
+       "a@x,b@y" string went out as a single RCPT TO and the second recipient
+       silently never received the report. sapapad_automation.py already split
+       on "," (see its _send_report); this brings the shared engine in line.
+
+    2. PER-TENANT OVERRIDE. One engine now serves several tenants, and they do
+       not share an audience — Symphony goes to the CSM, Independent does not.
+       Each config names its own env var, falling back to the global list.
+    """
+    cfg = CONFIG.get("email", {}) or {}
+    gmail_user = os.environ.get("GMAIL_USER", "")
+
+    raw = ""
+    tenant_env = cfg.get("recipient_env")
+    if tenant_env:
+        raw = os.environ.get(tenant_env, "")
+    if not raw:
+        raw = os.environ.get("REPORT_RECIPIENT", "")
+    if not raw:
+        raw = gmail_user
+
+    return [addr.strip() for addr in raw.split(",") if addr.strip()]
+
+
+def stage_email(out_path: pathlib.Path, row_count: int, business_date: str) -> None:
     t0 = time.monotonic()
 
+    cfg            = CONFIG.get("email", {}) or {}
     gmail_user     = os.environ.get("GMAIL_USER", "")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    recipient      = os.environ.get("REPORT_RECIPIENT", gmail_user)
+    recipients     = _resolve_recipients()
 
     if not gmail_user or not gmail_password:
         raise EmailError(
             "GMAIL_USER and GMAIL_APP_PASSWORD must be set in your .env / GitHub Secrets."
         )
+    if not recipients:
+        raise EmailError(
+            "No recipient resolved. Set the tenant's recipient env var "
+            f"({cfg.get('recipient_env') or 'REPORT_RECIPIENT'}) in your .env."
+        )
 
-    if location_label:
-        subject = f"POS Sales Report — {location_label} — {business_date}"
-        body = (
-            f"Hi,\n\n"
-            f"Please find attached the daily POS Sales Report for:\n\n"
-            f"  • Location : {location_label}\n"
-            f"  • Date     : {business_date}\n"
-            f"  • Rows     : {row_count:,}\n"
-            f"  • File     : {out_path.name}\n"
-            f"  • Run ID   : {RUN_ID}\n\n"
-            f"This report was generated automatically by the Oracle BI pipeline.\n\n"
-            f"Regards,\nOracle BI Automation"
-        )
-    else:
-        subject = f"POS Sales Report — {business_date}"
-        body = (
-            f"Hi,\n\n"
-            f"Please find attached the daily POS Sales Report for {business_date}.\n\n"
-            f"  • Rows: {row_count:,}\n"
-            f"  • File: {out_path.name}\n"
-            f"  • Run ID: {RUN_ID}\n\n"
-            f"This report was generated automatically by the Oracle BI pipeline.\n\n"
-            f"Regards,\nOracle BI Automation"
-        )
+    # Tenant-aware envelope. The defaults reproduce the Independent tenant's
+    # original wording verbatim, so configs without an email: block are
+    # unaffected by this change.
+    fields = {
+        "business_date": business_date,
+        "row_count": f"{row_count:,}",
+        "filename": out_path.name,
+        "run_id": RUN_ID,
+        "scope": cfg.get("scope", ""),
+    }
+    subject = cfg.get("subject_template", "POS Sales Report — {business_date}").format(**fields)
+
+    # An explicit scope line matters here: the Symphony export carries no
+    # location column, so the covered property has to be stated in the body
+    # rather than inferred from the grid by whoever uploads it.
+    scope_line = f"  • Scope: {fields['scope']}\n" if fields["scope"] else ""
+    body = (
+        f"Hi,\n\n"
+        f"{cfg.get('intro', 'Please find attached the daily POS Sales Report for {business_date}.').format(**fields)}\n\n"
+        f"{scope_line}"
+        f"  • Rows: {fields['row_count']}\n"
+        f"  • File: {fields['filename']}\n"
+        f"  • Run ID: {RUN_ID}\n\n"
+        f"{cfg.get('signoff', 'This report was generated automatically by the Oracle BI pipeline.')}\n\n"
+        f"Regards,\nOracle BI Automation"
+    )
 
     msg = MIMEMultipart()
     msg["From"]    = gmail_user
-    msg["To"]      = recipient
+    msg["To"]      = ", ".join(recipients)
     msg["Subject"] = subject
     msg.attach(MIMEText(body, "plain"))
 
@@ -871,141 +688,27 @@ def stage_email(
     try:
         with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
             server.login(gmail_user, gmail_password)
-            server.sendmail(gmail_user, recipient, msg.as_string())
+            server.sendmail(gmail_user, recipients, msg.as_string())
     except Exception as exc:
         raise EmailError(f"Failed to send email: {exc}") from exc
 
     log("email", "send", "ok",
         duration_ms=int((time.monotonic() - t0) * 1000),
-        extra={"to": recipient, "subject": subject, "attachment": out_path.name,
-               "location": location_label or "all"})
+        extra={"to": recipients, "subject": subject, "attachment": out_path.name})
 
-    print(f"[Stage 4] ✓ Email sent → {recipient}  [{location_label or 'all locations'}]\n")
+    print(f"[Stage 4] ✓ Email sent → {', '.join(recipients)}\n")
 
 
 # ──────────────────────────────────────────────────────────────────────────────
 # Orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
-def _worker(loc: dict, no_email: bool) -> dict:
-    """
-    Process one location in its own Playwright browser session.
-    Returns dict with keys: pos_name, supy_name, ok, no_data, stage, error,
-                            row_count, business_date.
-    """
-    pos_name  = loc["pos_name"]
-    supy_name = loc["supy_name"]
-    result    = {
-        "pos_name": pos_name, "supy_name": supy_name,
-        "ok": False, "no_data": False,
-        "stage": 0, "error": "",
-        "row_count": 0, "business_date": "",
-    }
-
-    try:
-        with sync_playwright() as p:
-            browser = p.chromium.launch(headless=True)
-            ctx_kwargs: dict = {"accept_downloads": True}
-            if STORAGE_STATE_PATH.exists():
-                ctx_kwargs["storage_state"] = str(STORAGE_STATE_PATH)
-            context = browser.new_context(**ctx_kwargs)
-            page    = context.new_page()
-
-            # Stage 2 — download
-            result["stage"] = 2
-            raw_file = stage_navigate_and_download(page, location_name=pos_name)
-            browser.close()
-
-        # Stage 3 — transform (no browser needed)
-        result["stage"] = 3
-        out_file, row_count, business_date = stage_transform(raw_file, supy_name=supy_name)
-        result["row_count"]     = row_count
-        result["business_date"] = business_date
-
-        # Stage 4 — email
-        result["stage"] = 4
-        if not no_email:
-            stage_email(out_file, row_count, business_date, location_label=supy_name)
-
-        result["ok"] = True
-
-    except NoDataError as exc:
-        result["no_data"] = True
-        result["error"]   = str(exc)
-        try:
-            browser.close()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
-
-    except Exception as exc:
-        result["error"] = str(exc)
-        try:
-            browser.close()  # type: ignore[possibly-undefined]
-        except Exception:
-            pass
-
-    if result["ok"]:
-        print(f"  [✓] {supy_name!r}  ({result['row_count']} rows)")
-    elif result["no_data"]:
-        print(f"  [–] {supy_name!r}  (no data)")
-    else:
-        print(f"  [✗] {supy_name!r}  stage {result['stage']}: {result['error'][:80]}")
-    return result
-
-
-def _send_digest_email(results: list[dict], report_date: str) -> None:
-    """Send one summary email listing all Oracle BI locations and their status."""
-    gmail_user     = os.environ.get("GMAIL_USER", "")
-    gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    recipient      = os.environ.get("REPORT_RECIPIENT", "")
-    if not gmail_user or not gmail_password or not recipient:
-        return
-
-    ok_rows      = [r for r in results if r["ok"]]
-    no_data_rows = [r for r in results if r["no_data"]]
-    failed_rows  = [r for r in results if not r["ok"] and not r["no_data"]]
-
-    lines = [
-        f"Oracle BI Daily Run Summary — {report_date}",
-        f"Run ID: {RUN_ID}",
-        "",
-        f"  ✅  Succeeded : {len(ok_rows)}",
-        f"  –   No data   : {len(no_data_rows)}",
-        f"  ❌  Failed    : {len(failed_rows)}",
-        f"  Total         : {len(results)}",
-        "",
-        "─" * 60,
-        f"{'Location':<45} {'Rows':>6}  Status",
-        "─" * 60,
-    ]
-    for r in sorted(results, key=lambda x: x["supy_name"]):
-        if r["ok"]:
-            status = f"✅  {r['row_count']:,} rows"
-        elif r["no_data"]:
-            status = "–  no data"
-        else:
-            status = f"❌  {r['error'][:40]}"
-        lines.append(f"{r['supy_name'][:45]:<45}  {status}")
-
-    body = "\n".join(lines)
-
-    msg = MIMEMultipart()
-    msg["From"]    = gmail_user
-    msg["To"]      = recipient
-    msg["Subject"] = f"[Summary] Oracle BI Run — {report_date} — {len(ok_rows)}/{len(results)} OK"
-    msg.attach(MIMEText(body, "plain"))
-
-    try:
-        with smtplib.SMTP_SSL("smtp.gmail.com", 465, timeout=30) as server:
-            server.login(gmail_user, gmail_password)
-            server.sendmail(gmail_user, recipient, msg.as_string())
-        print(f"\n[Digest] Summary email sent → {recipient}")
-    except Exception as exc:
-        print(f"\n[Digest] Failed to send summary email: {exc}", file=sys.stderr)
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Oracle BI Automation Pipeline")
+    parser.add_argument("--config", metavar="PATH", default=None,
+                        help="Tenant config YAML (default: config.yaml, or "
+                             "$POS_CONFIG). Read before argparse; listed here "
+                             "for --help and validation.")
     parser.add_argument("--debug", action="store_true",
                         help="Run with headed browser and verbose logging")
     parser.add_argument("--from-stage", type=int, default=1, metavar="N",
@@ -1014,89 +717,25 @@ def main() -> int:
                         help="Ignore cached session; always re-authenticate")
     parser.add_argument("--no-email", action="store_true",
                         help="Skip email — save output file locally only")
-
-    # ── Location selection flags ───────────────────────────────────────────────
-    loc_group = parser.add_mutually_exclusive_group()
-    loc_group.add_argument(
-        "--all-locations", action="store_true",
-        help="Loop through ALL active locations in config.yaml and run one report per location",
-    )
-    loc_group.add_argument(
-        "--location", metavar="POS_NAME",
-        help="Run for a single location by its POS name (e.g. \"Parker's Mirdiff\")",
-    )
-    parser.add_argument(
-        "--list-locations", action="store_true",
-        help="Print all active locations from config.yaml and exit",
-    )
-    parser.add_argument(
-        "--workers", type=int, default=5, metavar="N",
-        help="Number of parallel browser workers for --all-locations (default: 5)",
-    )
-    parser.add_argument(
-        "--limit", type=int, default=None, metavar="N",
-        help="Cap the number of locations processed (for testing, e.g. --limit 5)",
-    )
-
     args = parser.parse_args()
-
-    # ── --list-locations: print and exit ──────────────────────────────────────
-    if args.list_locations:
-        active = _get_active_locations()
-        print(f"\nActive locations ({len(active)} total):\n")
-        for i, loc in enumerate(active, start=1):
-            print(f"  {i:3d}. POS: {loc['pos_name']}")
-            print(f"       Supy: {loc['supy_name']}")
-        print()
-        return 0
 
     _init_logger(verbose=args.debug)
     from_stage = args.from_stage
 
-    print(f"\n[Oracle BI Pipeline] run_id={RUN_ID}  from_stage={from_stage}\n")
+    # Name the tenant, not the engine — one script now serves several.
+    _pipeline_name = (CONFIG.get("portal", {}) or {}).get("name") or "Oracle BI"
+    print(f"\n[{_pipeline_name} Pipeline] run_id={RUN_ID}  from_stage={from_stage}\n")
 
-    # ── Determine run mode ────────────────────────────────────────────────────
-    # all_locations mode: loop all active config entries
-    # single_location mode: specific POS name from --location flag
-    # legacy mode: no location filter (original single-report behaviour)
-
-    active_locations = _get_active_locations()
-    if args.limit:
-        active_locations = active_locations[:args.limit]
-
-    if args.all_locations:
-        if not active_locations:
-            print("[!] No active locations found in config.yaml — running in legacy mode.")
-            run_mode = "legacy"
-        else:
-            run_mode = "all_locations"
-            print(f"[→] Running in ALL-LOCATIONS mode ({len(active_locations)} locations)\n")
-    elif args.location:
-        # Find matching location in config (match by pos_name, case-insensitive)
-        matched = [
-            loc for loc in active_locations
-            if loc["pos_name"].lower() == args.location.lower()
-        ]
-        if not matched:
-            print(f"[✗] Location {args.location!r} not found in config.yaml active locations.",
-                  file=sys.stderr)
-            print("    Run --list-locations to see all available locations.", file=sys.stderr)
-            return 2
-        run_mode = "single_location"
-        single_location = matched[0]
-        print(f"[→] Running for single location: {single_location['pos_name']!r} "
-              f"→ {single_location['supy_name']!r}\n")
-    else:
-        run_mode = "legacy"
-
-    # ── Stage 3-only resumption path ──────────────────────────────────────────
     raw_file: Optional[pathlib.Path] = None
+
+    # If resuming from stage 3, find the most recent raw download
     if from_stage >= 3:
         checkpoint = read_checkpoint()
         raw_file_str = checkpoint.get("raw_file")
         if raw_file_str:
             raw_file = pathlib.Path(raw_file_str)
         else:
+            # Fall back to most recent file in downloads/
             candidates = sorted(DOWNLOADS_DIR.glob("*_raw.*"), key=lambda p: p.stat().st_mtime)
             if candidates:
                 raw_file = candidates[-1]
@@ -1104,32 +743,8 @@ def main() -> int:
             print("[✗] --from-stage 3 requires an existing raw download. "
                   "Run from stage 1 or 2 first.", file=sys.stderr)
             return 3
-        # Resume from stage 3 — legacy single-file mode
-        print("[Stage 3] Transforming raw data (resumed from checkpoint)...")
-        try:
-            out_file, row_count, business_date = stage_transform(raw_file)
-            print(f"[Stage 3] ✓ Output → {out_file}\n")
-        except TransformError as exc:
-            log("transform", "transform", "error", extra={"error": str(exc)})
-            print(f"[✗] Transform error: {exc}", file=sys.stderr)
-            return 3
 
-        if not args.no_email:
-            print("[Stage 4] Sending email...")
-            try:
-                stage_email(out_file, row_count, business_date)
-            except EmailError as exc:
-                log("email", "send", "error", extra={"error": str(exc)})
-                print(f"[✗] Email error: {exc}", file=sys.stderr)
-                print(f"  ↳ Report was saved to: {out_file}", file=sys.stderr)
-                return 4
-        else:
-            print(f"[Stage 4] Skipped (--no-email).  File saved → {out_file}\n")
-
-        print(f"[✓] Pipeline complete.  run_id={RUN_ID}\n")
-        return 0
-
-    # ── Stages 1 & 2 require a browser ────────────────────────────────────────
+    # Stages 1 & 2 require a browser
     if from_stage <= 2:
         headless = not args.debug
         try:
@@ -1157,137 +772,46 @@ def main() -> int:
                         browser.close()
                         return 1
 
-                # ── Stage 2 + 3 + 4: parallel per-location workers ────
-                if run_mode == "all_locations":
-                    # Auth is done; session state written to disk. Close auth browser.
+                # ── Stage 2: Navigate & Download ───────────────────
+                print("[Stage 2] Navigating to report and downloading...")
+                try:
+                    raw_file = stage_navigate_and_download(page)
+                    print(f"[Stage 2] ✓ Downloaded → {raw_file}\n")
+                except NavError as exc:
+                    log("nav", "navigate_and_download", "error", extra={"error": str(exc)})
+                    print(f"[✗] Nav error: {exc}", file=sys.stderr)
                     browser.close()
+                    return 2
 
-                    n_workers = min(args.workers, len(active_locations))
-                    print(f"[→] Spawning {n_workers} parallel workers for "
-                          f"{len(active_locations)} locations...\n")
-
-                    worker_fn = functools.partial(_worker, no_email=args.no_email)
-
-                    results = []
-                    with concurrent.futures.ThreadPoolExecutor(max_workers=n_workers) as pool:
-                        futures = {
-                            pool.submit(worker_fn, loc): loc
-                            for loc in active_locations
-                        }
-                        for fut in concurrent.futures.as_completed(futures):
-                            results.append(fut.result())
-
-                    succeeded = sum(1 for r in results if r["ok"])
-                    no_data   = sum(1 for r in results if r["no_data"])
-                    failed    = [r for r in results if not r["ok"] and not r["no_data"]]
-
-                    # Console summary
-                    print(f"\n{'─'*60}")
-                    print(f"[✓] All-locations run complete.  run_id={RUN_ID}")
-                    print(f"    Succeeded : {succeeded}/{len(active_locations)}")
-                    print(f"    No data   : {no_data}")
-                    if failed:
-                        print(f"    Failed ({len(failed)}):")
-                        for r in failed:
-                            print(f"      • [stage {r['stage']}] {r['pos_name']}: {r['error']}")
-                    print(f"{'─'*60}\n")
-
-                    # Digest email — one summary to the recipient
-                    report_date = next(
-                        (r["business_date"] for r in results if r["business_date"]), ""
-                    )
-                    if not args.no_email:
-                        _send_digest_email(results, report_date)
-
-                    return 0 if succeeded > 0 else 2
-
-                elif run_mode == "single_location":
-                    pos_name = single_location["pos_name"]
-                    supy_name = single_location["supy_name"]
-
-                    # Stage 2
-                    print(f"[Stage 2] Navigating and downloading for {pos_name!r}...")
-                    try:
-                        raw_file = stage_navigate_and_download(page, location_name=pos_name)
-                        print(f"[Stage 2] ✓ Downloaded → {raw_file}\n")
-                    except NavError as exc:
-                        log("nav", "navigate_and_download", "error", extra={"error": str(exc)})
-                        print(f"[✗] Nav error: {exc}", file=sys.stderr)
-                        browser.close()
-                        return 2
-
-                    browser.close()
-
-                    # Stage 3
-                    print("[Stage 3] Transforming raw data...")
-                    try:
-                        out_file, row_count, business_date = stage_transform(
-                            raw_file, supy_name=supy_name
-                        )
-                        print(f"[Stage 3] ✓ Output → {out_file}\n")
-                    except TransformError as exc:
-                        log("transform", "transform", "error", extra={"error": str(exc)})
-                        print(f"[✗] Transform error: {exc}", file=sys.stderr)
-                        return 3
-
-                    # Stage 4
-                    if not args.no_email:
-                        print("[Stage 4] Sending email...")
-                        try:
-                            stage_email(out_file, row_count, business_date,
-                                        location_label=supy_name)
-                        except EmailError as exc:
-                            log("email", "send", "error", extra={"error": str(exc)})
-                            print(f"[✗] Email error: {exc}", file=sys.stderr)
-                            print(f"  ↳ Report was saved to: {out_file}", file=sys.stderr)
-                            return 4
-                    else:
-                        print(f"[Stage 4] Skipped (--no-email).  File saved → {out_file}\n")
-
-                    print(f"[✓] Pipeline complete.  run_id={RUN_ID}\n")
-                    return 0
-
-                else:
-                    # Legacy mode
-                    print("[Stage 2] Navigating to report and downloading...")
-                    try:
-                        raw_file = stage_navigate_and_download(page)
-                        print(f"[Stage 2] ✓ Downloaded → {raw_file}\n")
-                    except NavError as exc:
-                        log("nav", "navigate_and_download", "error", extra={"error": str(exc)})
-                        print(f"[✗] Nav error: {exc}", file=sys.stderr)
-                        browser.close()
-                        return 2
-
-                    browser.close()
+                browser.close()
 
         except Exception as exc:
             print(f"[✗] Unexpected browser error: {exc}", file=sys.stderr)
             log("browser", "unexpected", "error", extra={"error": str(exc)})
             return 2
 
-    # ── Legacy mode: Stage 3 & 4 outside browser block ────────────────────────
-    if run_mode == "legacy":
-        print("[Stage 3] Transforming raw data...")
-        try:
-            out_file, row_count, business_date = stage_transform(raw_file)
-            print(f"[Stage 3] ✓ Output → {out_file}\n")
-        except TransformError as exc:
-            log("transform", "transform", "error", extra={"error": str(exc)})
-            print(f"[✗] Transform error: {exc}", file=sys.stderr)
-            return 3
+    # ── Stage 3: Transform ─────────────────────────────────────────
+    print("[Stage 3] Transforming raw data...")
+    try:
+        out_file, row_count, business_date = stage_transform(raw_file)
+        print(f"[Stage 3] ✓ Output → {out_file}\n")
+    except TransformError as exc:
+        log("transform", "transform", "error", extra={"error": str(exc)})
+        print(f"[✗] Transform error: {exc}", file=sys.stderr)
+        return 3
 
-        if not args.no_email:
-            print("[Stage 4] Sending email...")
-            try:
-                stage_email(out_file, row_count, business_date)
-            except EmailError as exc:
-                log("email", "send", "error", extra={"error": str(exc)})
-                print(f"[✗] Email error: {exc}", file=sys.stderr)
-                print(f"  ↳ Report was saved to: {out_file}", file=sys.stderr)
-                return 4
-        else:
-            print(f"[Stage 4] Skipped (--no-email).  File saved → {out_file}\n")
+    # ── Stage 4: Email ─────────────────────────────────────────────
+    if not args.no_email:
+        print("[Stage 4] Sending email...")
+        try:
+            stage_email(out_file, row_count, business_date)
+        except EmailError as exc:
+            log("email", "send", "error", extra={"error": str(exc)})
+            print(f"[✗] Email error: {exc}", file=sys.stderr)
+            print(f"  ↳ Report was saved to: {out_file}", file=sys.stderr)
+            return 4
+    else:
+        print(f"[Stage 4] Skipped (--no-email).  File saved → {out_file}\n")
 
     print(f"[✓] Pipeline complete.  run_id={RUN_ID}\n")
     return 0

@@ -1,4 +1,6 @@
 .env
+.env.*
+!.env.example
 state/
 downloads/
 output/
@@ -7,3 +9,5 @@ screenshots/
 __pycache__/
 *.pyc
 *.pyo
+.firecrawl/
+tests/*.bak

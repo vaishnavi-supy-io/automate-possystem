@@ -1,0 +1,261 @@
+# ============================================================
+# Dines Automation — Configuration  (Black Bear Burger)
+# ============================================================
+#
+# Dines differs from every other pipeline in this repo: each branch is a
+# SEPARATE login, not a location filter on one account. So the run loops
+# branch → fresh context → login → PIN → export, and one branch failing
+# never touches the others.
+#
+# Credentials live in .env ONLY, written with set_credential.py so they are
+# never echoed. Never put a username, password or PIN in this file.
+# ============================================================
+
+portal:
+  login_url: "https://dashboard.dines.co.uk/login"
+  # Multi-venue accounts have a separate portal; if these four logins turn out
+  # to be venue-level (they look like it — ed+mhcw@, ed+mhvc@ etc.), the single
+  # dashboard is right. organisation-dashboard.dines.co.uk would let one login
+  # cover all four venues — worth asking the client about.
+  organisation_url: "https://organisation-dashboard.dines.co.uk/"
+  reports_summary_url: "https://dashboard.dines.co.uk/reports/summary"
+  reports_list_url: "https://dashboard.dines.co.uk/reports/list"
+  # The report id differs per venue, so it is resolved by link text and cached
+  # in state/dines/report_ids.json — never hardcoded.
+  report_url_template: "https://dashboard.dines.co.uk/reports/report/{report_id}"
+  # Element present only when logged in — used to validate a cached session.
+  # The login page always has #login-form, so its ABSENCE means we are in.
+  # Refine once someone has seen the logged-in dashboard.
+  authenticated_element: "body:not(:has(#login-form))"
+
+# -------------------------------------------------------
+# BRANCHES
+#
+# env_prefix names the .env keys for that branch:
+#   <PREFIX>_USERNAME, <PREFIX>_PASSWORD, <PREFIX>_PIN
+#
+# supy_branch must match the Supy branch name exactly — it is what lands in
+# the output filename and the email subject.
+#
+# All NINE Supy branches are listed here. A branch runs only when its three
+# .env keys are present; --all-branches reports the rest as `no_creds` and
+# carries on, so the run never fails over a branch that is not set up yet.
+# Adding credentials is therefore the ONLY step needed to bring one online:
+#     python set_credential.py --partner dines_sh
+#
+# CREDENTIALS ON FILE 2026-09-01: canary_wharf, victoria, oxford, paddington.
+#
+# The other five were listed on the instruction to cover all nine branches,
+# but were previously believed Deliveroo-only. Listing a branch here asserts
+# nothing about whether it is actually on Dines — confirm that with the team
+# before chasing credentials for it.
+# -------------------------------------------------------
+branches:
+  - key: canary_wharf
+    supy_branch: "Black Bear Burger Canary Wharf"
+    env_prefix: "DINES_CW"
+
+  - key: victoria
+    supy_branch: "Black Bear Burger Victoria"
+    env_prefix: "DINES_VIC"
+
+  - key: oxford
+    supy_branch: "20ft Chicken Oxford St"
+    env_prefix: "DINES_OS"
+
+  - key: paddington
+    supy_branch: "Black Bear Burger Paddington"
+    env_prefix: "DINES_PD"
+
+  # ---- added 2026-09-01 to cover all nine branches; awaiting credentials ----
+  - key: shoreditch
+    supy_branch: "Black Bear Burger Shoreditch"
+    env_prefix: "DINES_SH"
+
+  - key: brixton
+    supy_branch: "Black Bear Burger Brixton"
+    env_prefix: "DINES_BX"
+
+  - key: camden
+    supy_branch: "Black Bear Burger Camden"
+    env_prefix: "DINES_CM"
+
+  - key: exmouth_market
+    supy_branch: "Black Bear Burger Exmouth Market"
+    env_prefix: "DINES_EM"
+
+  - key: westfield
+    supy_branch: "Black Bear Burger Westfield"
+    env_prefix: "DINES_WF"
+
+# -------------------------------------------------------
+# LOGIN FIELD SELECTORS
+# VERIFIED against the live login page 2026-08-31 via --discover:
+#   <form id="login-form"> with #username (type=email) and #password,
+#   submitted by <button id="submit" type="submit">Sign in</button>.
+# The page also offers "One Time Passcode" — we use password auth.
+# -------------------------------------------------------
+selectors:
+  username_field: "#username"
+  password_field: "#password"
+  login_button: "#submit"
+  login_error: "[role='alert'], .text-red-500, .text-error"
+  export_button: "button:has-text('Export')"
+
+  # Manager PIN prompt. VERIFIED 2026-08-31: it is a touch KEYPAD, not a text
+  # field — <div id="pin-overlay"> holding one button per digit plus Close and
+  # Delete. The PIN is clicked digit by digit and the pad submits itself on the
+  # last digit. pin_field is kept only as a fallback if that ever changes.
+  pin_overlay: "#pin-overlay"
+  pin_field: "input[inputmode='numeric'], input[name='pin']"
+  pin_submit: "#pin-overlay button[type='submit']"
+
+# -------------------------------------------------------
+# NAVIGATION
+#
+# There is no config-driven click chain any more. The manual process is
+#   Reports → PIN → Reporting → Sales By Product → date → Export
+# but under automation the manager-PIN token expires before a chain that long
+# reaches Export, and the date picker does nothing (verified 2026-08-31:
+# dispatch_event, force click, real mouse sequence and Escape all leave the
+# range untouched and the export byte-identical).
+#
+# So stage_export instead: resolves the report id from /reports/list once and
+# caches it, goes straight to the report URL, clears the PIN overlay whenever
+# it appears, and sets the date by rewriting start_date/end_date on the
+# report's own fetch. See _install_date_route in dines_automation.py.
+# -------------------------------------------------------
+# -------------------------------------------------------
+# COLUMN MAPPING  (from the team's written spec)
+#
+#   Product                = POS Item Name
+#   Qty                    = Sold QTY *
+#   Discount               = 0
+#   Gross Product Sales    = Total sales incl. tax *
+#   Total sales excl. tax  = incl. tax / 1.2
+#
+# NOTE THE VAT DIRECTION. Dines reports a VAT-INCLUSIVE figure and we DIVIDE
+# by 1.2 — confirmed as the correct treatment by Charlotte on 2026-09-03:
+# "That's the standard calculation for UK accounts if you only have tax
+# inclusive." Note the CONDITION: divide only when the source gives you gross
+# and nothing else.
+#
+# Careful with the Deliveroo comparison, which used to be stated here as a
+# flat "Deliveroo reports NET and we MULTIPLY". That is true of ONE of the two
+# Deliveroo pipelines only:
+#   blackbear_convert.py   Looker email export, values are NET  -> MULTIPLY
+#   deliveroo_automation.py  Partner Hub Items Sold, gross       -> DIVIDE
+# Same brand, two reports, opposite directions. See the VAT table in README.
+#
+# Getting a direction backwards changes every money column while quantities
+# look untouched, which is why each pipeline is pinned by a test.
+# -------------------------------------------------------
+# Venue timezone. The dashboard computes date ranges in the BROWSER's timezone,
+# so this is pinned rather than inherited from whatever machine runs the job.
+venue_timezone: "Europe/London"
+venue_locale: "en-GB"
+
+# The report data is fetched through this endpoint with explicit start_date /
+# end_date parameters, which stage 2 rewrites to the target day. The on-screen
+# date picker is broken under automation — see the note on the date steps below.
+report_api_glob: "**/get_report/**"
+
+# Which report to export, matched by link text on /reports/list.
+report_link_text: "Sales by Product"
+render_wait_s: 6          # the report fetch is async; wait before Export
+export_attempts: 3
+export_interval_s: 8
+
+vat_rate: 0.20
+vat_direction: "inclusive"   # source figure includes VAT → divide to get excl.
+
+columns:
+  - raw: "Product"
+    target: "POS Item Name"
+    dtype: str
+
+  - raw: "Qty"
+    target: "Sold QTY *"
+    dtype: int
+
+  - raw: "Gross Product Sales"
+    target: "Total sales incl. tax *"
+    dtype: float
+
+  - raw: null
+    target: "Total sales excl. tax *"
+    dtype: float
+    inject: derive_excl_from_incl
+
+  - raw: null
+    target: "Sales Date *"
+    dtype: date
+    inject: date_yesterday
+
+  - raw: null
+    target: "Total Discount Value"
+    dtype: float
+    inject: zero              # spec says Discount = 0, not blank
+
+  - raw: null
+    target: "Order ID"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Sales Type Code"
+    dtype: str
+    inject: empty
+
+  - raw: null
+    target: "Parent Item ID"
+    dtype: str
+    inject: empty
+
+# -------------------------------------------------------
+# PLU CODES
+#
+# OPEN QUESTION — do not treat this default as settled.
+# The team said Dines PLU codes DIFFER from Deliveroo's; the request to
+# automate said they are the SAME. Until that is resolved, `file` stays null
+# and POS Item ID falls back to the item name (visible, never silently wrong).
+#
+# Once confirmed, either point `file` at the Dines PLU sheet, or pass
+# --plu-file on the command line. Applying the Deliveroo sheet here while the
+# codes actually differ would post real money against the wrong items.
+# -------------------------------------------------------
+plu:
+  # Dines has its OWN numeric PLU scheme — NOT Deliveroo's sku-/mod- codes.
+  # Confirmed 2026-09-01 from the `PLU` tab of the "MarketHall - BBB Sales"
+  # sheet: 167 mappings, 135 distinct codes (Regular Fries=1, Black Bear=2,
+  # Cheeseburger=5 ...). 25 codes carry aliases, e.g. "Black Bear",
+  # "Black Bear - Single", "Single - Black Bear" and "Black Bear Burger -
+  # Single" all map to 2 — which is why matching is on name with aliases
+  # rather than a single canonical name per code.
+  #
+  # Earlier runs used the Deliveroo PLU CODE sheet here. That was wrong and
+  # those POS Item IDs must not be uploaded.
+  file: "mappings/dines_plu.csv"
+  sheet_hint: "PLU"
+
+output_column_order:
+  - "Sales Date *"
+  - "POS Item ID *"
+  - "POS Item Name"
+  - "Sold QTY *"
+  - "Total Discount Value"
+  - "Total sales excl. tax *"
+  - "Total sales incl. tax *"
+  - "Order ID"
+  - "Sales Type Code"
+  - "Parent Item ID"
+
+output_date_format: "%d-%b-%Y"
+
+# -------------------------------------------------------
+# EMAIL
+# Recipients come from DINES_REPORT_RECIPIENT, else REPORT_RECIPIENT in .env.
+# Comma- or semicolon-separated; --email-to overrides for one run.
+# -------------------------------------------------------
+email:
+  subject_prefix: "Black Bear Burger (Dines)"
