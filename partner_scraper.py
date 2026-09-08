@@ -47,6 +47,7 @@ import sys
 import time
 import traceback
 import uuid
+from urllib.parse import quote
 from datetime import datetime, timedelta
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -1551,6 +1552,146 @@ def format_range(date_from: datetime, date_to: datetime, fmt: str) -> str:
 # Orchestrator
 # ──────────────────────────────────────────────────────────────────────────────
 
+def fetch_rows_via_api(cfg: dict, partner: str, date_from, date_to) -> list:
+    """
+    Read line items from the portal's own JSON API instead of its DOM.
+
+    A browser is still needed — but only to capture the Bearer token the SPA
+    sends; nothing is read off the page, so there are no selectors to rot.
+
+    Added 2026-09-08 for Ordit, whose order detail is unreachable any other
+    way: the detail route renders nothing in a headless context and the CSV
+    export is order-level only. The API returns items in one call per order.
+    """
+    api = cfg.get("api") or {}
+    for key in ("seed_url", "list_url", "detail_url", "host"):
+        if not api.get(key):
+            raise ConfigError(
+                f"partners/{partner}.yaml sets api.enabled but no api.{key}")
+
+    items_key = api.get("items_key", "meals")
+    # priceWithMealOptions, NOT price: it folds in PAID modifiers. Verified
+    # 2026-09-08 that sum(priceWithMealOptions * qty) reconciles to the order's
+    # priceSumItems to the penny on three orders (44.40 / 18.45 / 272.40),
+    # while sum(price * qty) under-reports by exactly the paid modifiers.
+    price_key = api.get("price_key", "priceWithMealOptions")
+
+    captured: dict = {}
+    rows: list = []
+
+    with sync_playwright() as p:
+        browser = p.chromium.launch(headless=True)
+        ctx_kwargs = {"locale": "en-GB", "timezone_id": "Europe/London"}
+        storage = _storage_path(partner)
+        if storage.exists():
+            ctx_kwargs["storage_state"] = str(storage)
+        context = browser.new_context(**ctx_kwargs)
+        page = context.new_page()
+
+        def _grab(req):
+            if api["host"] in req.url and not captured:
+                auth = req.headers.get("authorization")
+                if auth:
+                    captured["authorization"] = auth
+
+        page.on("request", _grab)
+        try:
+            page.goto(api["seed_url"], timeout=60000,
+                      wait_until="domcontentloaded")
+            page.wait_for_timeout(int(api.get("token_wait_ms", 12000)))
+            if not captured:
+                raise AuthError(
+                    f"{partner}: no Authorization header seen on "
+                    f"{api['host']}. The session under state/{partner}/ has "
+                    f"probably expired — re-run with --force-login.")
+            log("auth", "api_token_captured", "ok", extra={"scheme": "Bearer"})
+
+            list_url = api["list_url"].format(
+                after=quote(date_from.strftime("%Y-%m-%dT00:00:00+01:00"), safe=""),
+                before=quote(date_to.strftime("%Y-%m-%dT23:59:59+01:00"), safe=""))
+            resp = context.request.get(list_url, headers=captured)
+            if resp.status != 200:
+                raise ScrapeError(
+                    f"{partner}: order list returned {resp.status} from "
+                    f"{api['host']}")
+            payload = resp.json()
+            orders = payload.get("hydra:member", payload.get("member", []))
+            log("nav", "api_list", "ok",
+                extra={"orders": len(orders),
+                       "total": payload.get("hydra:totalItems")})
+            print(f"  [api] {len(orders)} order(s) in range")
+
+            for o in orders:
+                oid = o.get("id")
+                detail = context.request.get(
+                    api["detail_url"].format(id=oid), headers=captured)
+                if detail.status != 200:
+                    log("nav", "api_detail", "warn",
+                        extra={"order": oid, "status": detail.status})
+                    continue
+                d = detail.json()
+                ident = d.get("identifier") or str(oid)
+                when = str(d.get("requiredDeliveryTime") or "")[:10]
+                for it in d.get(items_key, []) or []:
+                    meal = it.get("meal") or {}
+                    name = meal.get("name") or it.get("name")
+                    qty = it.get("quantity") or 0
+                    unit = it.get(price_key)
+                    if unit is None:
+                        unit = it.get("price")
+                    if not name or not qty:
+                        continue
+                    # `children` are modifiers. Free ones cost nothing and paid
+                    # ones are ALREADY inside priceWithMealOptions, so emitting
+                    # them as their own rows would double-count the order.
+                    rows.append({
+                        "order_id": ident,
+                        # datetime in memory, ISO on disk — the shape
+                        # load_scraped_rows() and stage_transform() expect.
+                        "order_date": (datetime.fromisoformat(when)
+                                       if when else None),
+                        "item_name": str(name).strip(),
+                        "qty": qty,
+                        "unit_price_inc_tax": float(unit or 0),
+                    })
+
+            # Per-order reconciliation: the API states the item subtotal, so a
+            # mismatch means the price field or modifier handling is wrong.
+            for o in orders:
+                want = o.get("priceSumItems")
+                if want is None:
+                    continue
+                ident = o.get("identifier") or str(o.get("id"))
+                got = sum(r["qty"] * r["unit_price_inc_tax"]
+                          for r in rows if r["order_id"] == ident)
+                if abs(got - float(want)) > 0.01:
+                    log("transform", "api_reconcile", "warn",
+                        extra={"order": ident, "expected": float(want),
+                               "got": round(got, 2)})
+                    print(f"  [!] {ident}: items sum to {got:.2f} but the API "
+                          f"reports {float(want):.2f}", file=sys.stderr)
+        finally:
+            context.close()
+            browser.close()
+
+    # Same rule as stage_scrape: never replace a good dataset with an empty one.
+    path = _scraped_path(partner)
+    if not rows and path.exists():
+        print(f"  [!] API returned 0 rows — keeping the previous {path.name} "
+              f"rather than overwriting it.", file=sys.stderr)
+        log("scrape", "preserved_previous_scrape", "warn",
+            extra={"path": str(path)})
+    else:
+        try:
+            path.write_text(json.dumps(
+                [{**r, "order_date": r["order_date"].isoformat()
+                  if r.get("order_date") else None} for r in rows], indent=2))
+        except OSError:
+            pass
+
+    return rows
+
+
 def run_partner(partner: str, args) -> int:
     cfg = load_partner_config(partner)
     _init_logger(partner, args.debug)
@@ -1571,6 +1712,18 @@ def run_partner(partner: str, args) -> int:
         except TransformError as exc:
             print(f"[✗] {exc}", file=sys.stderr)
             return 3
+    elif (cfg.get("api") or {}).get("enabled"):
+        # The portal's own JSON API, not its DOM. No selectors involved.
+        print("[Stage 1-2] Reading the portal API...")
+        try:
+            rows = fetch_rows_via_api(cfg, partner, date_from, date_to)
+            print(f"[Stage 1-2] ✓ {len(rows)} line item(s) from the API\n")
+        except (AuthError, ConfigError) as exc:
+            print(f"[✗] {exc}", file=sys.stderr)
+            return 1
+        except ScrapeError as exc:
+            print(f"[✗] {exc}", file=sys.stderr)
+            return 2
     else:
         browser_cfg = cfg.get("browser", {}) or {}
         use_profile = bool(browser_cfg.get("persistent_profile"))

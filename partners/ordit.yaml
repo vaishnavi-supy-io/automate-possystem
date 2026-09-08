@@ -135,6 +135,44 @@ dates:
   detail_format: ""
   default_lookback_days: 1
 
+# ============================================================
+# API SOURCE — added 2026-09-08. Ordit is read through its own JSON API,
+# not its DOM, so this partner has NO scrape selectors.
+#
+# WHY: the vendor SPA's order-detail route renders nothing in a headless
+# context (742-char body, no product names), navigating straight to it just
+# re-renders the list, and the EXPORT button yields an ORDER-level CSV with no
+# items. The API returns items in one call and cannot break on a restyle.
+#
+# A browser still runs, but only to capture the Bearer token the SPA sends —
+# nothing is read off the page. If the token stops appearing, the session
+# under state/ordit/ has expired; re-run with --force-login.
+#
+# Verified 2026-09-08: 14 orders across 01-Jul..08-Sep, items on every one.
+# (The note above claiming ZERO orders in August is wrong — 06-Aug OC-MTYZ-1291
+# is £44.40.)
+# ============================================================
+api:
+  enabled: true
+  host: "coreapi.ordit.co.uk"
+  # Any authenticated vendor page will do; loading it makes the SPA emit a token.
+  seed_url: "https://admin.ordit.co.uk/orders/history/lastmonth"
+  token_wait_ms: 12000
+  list_url: "https://coreapi.ordit.co.uk/api/v1/orders/v2?requiredDeliveryTime%5Bafter%5D={after}&requiredDeliveryTime%5Bbefore%5D={before}&itemsPerPage=100&page=1"
+  # ✅ /api/v1/orders/{id} is the ONLY detail route that works. Measured the
+  #    same day: /orders/v2/{id}, /orders/{id}/items and /order-items?order={id}
+  #    all 404.
+  detail_url: "https://coreapi.ordit.co.uk/api/v1/orders/{id}"
+  items_key: "meals"
+  # ⚠️  priceWithMealOptions, NOT price. `price` and `supplierPrice` exclude
+  #     PAID modifiers; priceWithMealOptions folds them in (Pad Thai 13.50 ->
+  #     16.50 with Prawns +3). Verified on three orders that
+  #     sum(priceWithMealOptions * qty) equals the API's own priceSumItems to
+  #     the penny (44.40 / 18.45 / 272.40), where sum(price * qty) was short by
+  #     exactly the paid modifiers. The engine re-checks this every run and
+  #     warns per order if it stops reconciling.
+  price_key: "priceWithMealOptions"
+
 pricing:
   source: scraped
   unit_price_is_per_item: true
@@ -148,6 +186,17 @@ pricing:
   #     net figure and understates both money columns.
   #     To confirm: open one Ordit order and check whether the line prices
   #     sum to the order total as-is (net) or already include VAT (gross).
+  #
+  # 2026-09-08 — evidence FOR gross, but still not proof:
+  #   * The API's line prices reconcile exactly to its own priceSumItems, so
+  #     the figures are internally consistent — but that says nothing about
+  #     whether that subtotal is net or gross.
+  #   * Ordit prices match Deliveroo's for the SAME items — "Stir Fry Chilli
+  #     & Basil" is 12.95 on both — and Deliveroo is documented gross (÷1.2).
+  #   * Ordit is a consumer-facing marketplace (app.ordit.co.uk is the buyer
+  #     side), and UK consumer prices are displayed inc VAT.
+  # That is circumstantial. A single invoice showing the VAT line would settle
+  # it; until then this stays flagged.
   price_includes_tax: true   # assumed — see the warning above
 
 destination: "Street Food Ltd."

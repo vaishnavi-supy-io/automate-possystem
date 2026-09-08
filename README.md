@@ -699,9 +699,58 @@ already working.
 | `deliveroo` | ✅ working | — (verified end to end 2026-09-04, 5 rows emailed) |
 | `justeat_business` | ✅ **scrapes unattended** | Needs 21 prices in `mappings/justeat_business_prices.csv` |
 | `homecook` | ✅ scrapes correctly | Needs 4 wholesale prices in `mappings/homecook_prices.csv` |
-| `ordit` | ⚠️ auth fixed, items unreachable | See below |
-| `just_eat` | ❌ | Cloudflare, and CDP is broken — see below |
-| `uber_eats` | ❌ | SMS one-time code; no unattended route exists |
+| `ordit` | ✅ **working, via the portal's JSON API** | — (see below) |
+| `just_eat` | ❌ | Cloudflare; needs a human-seeded profile — see below |
+| `uber_eats` | ❌ | SMS one-time code; no unattended LOGIN exists |
+
+### Ordit — solved by reading the API, not the DOM (2026-09-08)
+
+The "no item-level data exists" conclusion above was wrong. It is unreachable
+through the **DOM** — but `coreapi.ordit.co.uk` serves it freely:
+
+```
+GET /api/v1/orders/v2?requiredDeliveryTime[after]=…&[before]=…   → order list
+GET /api/v1/orders/{id}                                          → meals[] with items
+```
+
+`/orders/v2/{id}`, `/orders/{id}/items` and `/order-items?order={id}` all 404 —
+`/orders/{id}` is the only detail route. A browser still runs, but only to
+capture the Bearer token the SPA sends; nothing is read off the page, so there
+are **no selectors to rot**. Driven by `api.enabled` in `partners/ordit.yaml`.
+
+Two further claims in that config were also wrong: August was not empty
+(06-Aug OC-MTYZ-1291 is £44.40), and `status=new` is not a limitation —
+arbitrary date ranges work, and the SPA itself uses them.
+
+Verified end to end: 14 orders → 37 line items → £495.30 gross / £412.75 net
+across 01-Jul–08-Sep, emailed 2026-09-08.
+
+**Use `priceWithMealOptions`, not `price`.** `price` and `supplierPrice`
+exclude PAID modifiers; `priceWithMealOptions` folds them in. Summing the
+former under-reports by exactly the modifier value. The engine re-checks every
+order against the API's own `priceSumItems` and warns if it stops reconciling.
+`children` must never become their own rows — free ones are £0 and paid ones
+are already counted, so emitting them double-counts the order.
+
+⚠️  VAT direction is still ASSUMED gross. The reconciliation proves internal
+consistency only. Circumstantial support: Ordit and Deliveroo list identical
+prices for identical items (Stir Fry Chilli & Basil, 12.95 on both) and
+Deliveroo is documented gross. One invoice showing a VAT line would settle it;
+if Ordit reports net, every money column is 20% light.
+
+### ⚠️ Automated access degrades these portals — space runs out
+
+Both `just_eat` and `justeat_business` were hit many times from one IP on
+2026-09-08 while diagnosing. Consequences, both self-inflicted:
+
+* `partner-hub.just-eat.co.uk` — a working human-seeded Cloudflare clearance
+  was destroyed by a `clear_cookies()` call and could not be re-earned.
+* `app.business.just-eat.co.uk` — authenticated and scraped 30 line items in
+  the morning, then began returning **403** after repeated probing. The host
+  serves Cloudflare RUM (`/cdn-cgi/rum`), so it is protected after all.
+
+If a partner that worked starts failing, back off for hours rather than
+retrying in a loop. Retrying is what caused this.
 
 ### The two hosts do NOT share Cloudflare protection (measured 2026-09-08)
 
