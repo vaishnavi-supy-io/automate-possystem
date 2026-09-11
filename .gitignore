@@ -11,3 +11,6 @@ __pycache__/
 *.pyo
 .firecrawl/
 tests/*.bak
+
+# static export — regenerate with export_dashboard.py
+site/
