@@ -11,3 +11,11 @@ __pycache__/
 *.pyo
 .firecrawl/
 tests/*.bak
+
+# static export — regenerate with export_dashboard.py
+site/
+
+# wrangler files
+.wrangler
+.dev.vars*
+!.dev.vars.example

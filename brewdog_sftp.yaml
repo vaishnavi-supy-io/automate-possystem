@@ -1,0 +1,94 @@
+# ============================================================
+# BrewDog UK & Ireland — daily sales via SFTP
+# ============================================================
+# One CSV per STORE per day on SFTP To Go: 20260908_10000013.csv.
+# 21 stores a day, ~22,500 transaction lines, history back to 2026-06-14.
+#
+# Unlike Smash Tag this is TRANSACTION level — one row per item per till
+# transaction — so it must be rolled up to daily totals per item per store.
+#
+# Net, VAT and Gross are all given per line and net + VAT == gross on every
+# row (checked across a full day, zero mismatches). Nothing here calculates
+# VAT. The effective rate is 19.70%, not 20%, because some lines are
+# zero-rated — deriving one column from another would be wrong.
+# ============================================================
+
+client:
+  name: "BrewDog UK & Ireland"
+  destination: "BrewDog"
+
+connection:
+  host_env: SFTP_BREWDOG_UK_IRELANG_HOST
+  username_env: SFTP_BREWDOG_UK_IRELANG_USERNAME
+  password_env: SFTP_BREWDOG_UK_IRELANG_PASSWORD
+  port: 22
+  remote_dir: "/"
+  # 20260908_10000013.csv  ->  date + store. Both come from the FILENAME;
+  # the in-file Transaction Date is used only as a cross-check.
+  #
+  # ⚠️  location is [A-Za-z0-9]+, NOT \d+. Store IDs are not all numeric: as
+  #     well as 1-5 and 10000001-10000016 there is a hex-named site,
+  #     28d2dae9, trading normally (95 rows on 2026-09-10, "The Punk Burger").
+  #     A \d+ pattern silently excluded it from EVERY run — 77 files going
+  #     back to 2026-06-26 were skipped with no error, because a file that
+  #     does not match the pattern is simply not seen. Discovered 2026-09-11
+  #     only by comparing the server listing against the converted output.
+  filename_pattern: '^(?P<date>\d{8})_(?P<location>[A-Za-z0-9]+)\.csv$'
+  date_in_name_format: "%Y%m%d"
+  min_age_seconds: 60
+
+source:
+  mode: aggregate_transactions
+
+columns:
+  item_id: "EPOS/PLU Number"
+  item_name: "Description"
+  qty: "Quantity"
+  net: "Net Value"
+  vat: "VAT Value"
+  gross: "Gross Value"
+  txn_type: "Transaction Type"
+  location: "Location ID"
+
+aggregate:
+  group_by: ["item_id", "item_name"]
+  # ⚠️  WHICH ROWS ARE SALES — the decision that matters most here.
+  #
+  # Measured on 2026-09-08 across all 21 stores:
+  #     Sale          15,478 rows   £73,759.22
+  #     Promo          3,907 rows   £10,521.46   meal deals ("Double Meaty Quarter")
+  #     Comp           3,102 rows    £9,701.44   "Staff Discount 25%"
+  #     Refund             2 rows       -£4.98
+  #     Revenue Item      31 rows        £0.75   "***CB***", not a product
+  #
+  # Promo and Comp are NOT giveaways — they carry real money and real stock
+  # movement, so excluding them would under-report 21% of the day's volume and
+  # leave inventory overstated. Refunds are included so they net off.
+  # Revenue Item is excluded: "***CB***" markers are not products.
+  include_types: ["Sale", "Promo", "Comp", "Refund"]
+  # One Supy file per store per day — each location is its own entity.
+  file_per: location
+
+output:
+  date_format: "%d-%b-%Y"
+
+parsing:
+  strip_thousands: true
+  blank_numeric_is_zero: true
+
+alerting:
+  warn_if_newest_older_than_hours: 36
+
+email:
+  recipients:
+    - vaishnavi@supy.io
+    - charlotte@supy.io
+    - customer.care@supy.io
+  notes: |
+    Net, VAT and gross come straight from the export and reconcile on every
+    line, so nothing is calculated here. The effective VAT rate is ~19.7%
+    rather than 20% because some items are zero-rated.
+
+    Promo and Comp lines ARE included: they are discounted sales, not
+    giveaways, and they move stock. Excluding them would understate volume by
+    roughly a fifth.

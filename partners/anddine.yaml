@@ -19,6 +19,11 @@ auth:
   username_env: ANDDINE_USERNAME
   password_env: ANDDINE_PASSWORD
 
+browser:
+  # Modest pause between order-detail loads. This portal has shown no rate
+  # limiting, but a backfill opens every order in the range, not five.
+  request_delay_seconds: 1
+
 selectors:
   # ✅ CONFIRMED 2026-08-06 from the live login page (no login performed).
   # NB: the password field is name='non-auto' — an anti-autofill trick, not a typo.
@@ -41,7 +46,15 @@ selectors:
   # Needed for the Set-order fallback below.
   order_total: ".block.dynamic.order_total"
   order_reference: ".block.dynamic.reference"
-  next_page: ""                    # VERIFY — pagination control (20 rows/page)
+  # ✅ CONFIRMED 2026-09-11 against the live list. The pager is NUMBERED
+  # ("1 2 3 4 5 6 7"), not a Next button, so a plain ".table__pagination--button"
+  # would re-click "1" forever. The adjacent-sibling selector means "the button
+  # after the selected one", which advances and then runs out on the last page.
+  #
+  # ⚠️  ?page=N IS IGNORED here — requesting /orders?page=2 returns page 1's
+  #     rows verbatim (measured). The click path is the only one that works, so
+  #     pagination.url_param must NOT be set for this partner.
+  next_page: ".table__pagination--button.button-selected + .table__pagination--button"
 
   # NOTE: .block.dynamic.reference only exists on the LIST page, so on the
   # detail page this falls through to the numeric id from the URL (e.g. 15511).
@@ -81,7 +94,18 @@ orders:
   fallback_name_template: "&Dine Set Order {reference}"
 
 pagination:
+  # 20 rows/page and 7 pages hold the entire order history (Jul 2024 onward),
+  # so this cap is never reached in practice.
   max_pages: 20
+  # ⚠️  MUST STAY FALSE. The engine's default is to stop paging once a page is
+  #     wholly older than --from, which is safe only on a newest-first list.
+  #     This list is not one: selectors.order_date is the DELIVERY date while
+  #     the rows are ordered by when the order was placed, so the dates jump
+  #     around. Measured 2026-09-11 — page 1 ran 18/09/26 down to 28/07/26 and
+  #     ended 28/07 then 30/07, and page 4 (Jan–May 2026) sat between pages of
+  #     2026 and 2024 data. Stopping early here would drop real sales.
+  stop_when_older: false
+  delay_seconds: 2
 
 dates:
   list_format: "%d/%m/%y"          # ✅ confirmed — e.g. "05/08/26"

@@ -55,19 +55,49 @@ load_dotenv()
 BASE_DIR      = pathlib.Path(__file__).parent
 DOWNLOADS_DIR = BASE_DIR / "downloads"
 OUTPUT_DIR    = BASE_DIR / "output"
-STATE_DIR     = BASE_DIR / "state" / "sapapad"
 LOGS_DIR      = BASE_DIR / "logs"
 SCREENSHOTS_DIR = BASE_DIR / "screenshots"
 MAPPINGS_DIR  = BASE_DIR / "mappings"
+
+
+def _config_path_from_argv() -> pathlib.Path:
+    """
+    Resolve --config before argparse runs.
+
+    The config is read at import time (selectors and column maps are needed by
+    module-level code), which is earlier than argparse. Rather than restructure
+    that, --config is picked out of sys.argv here. Defaults to
+    sapapad_config.yaml so BMD keeps working exactly as before.
+    """
+    argv = sys.argv[1:]
+    for i, a in enumerate(argv):
+        if a == "--config" and i + 1 < len(argv):
+            return pathlib.Path(argv[i + 1])
+        if a.startswith("--config="):
+            return pathlib.Path(a.split("=", 1)[1])
+    return BASE_DIR / "sapapad_config.yaml"
+
+
+CONFIG_PATH = _config_path_from_argv()
+if not CONFIG_PATH.is_absolute():
+    CONFIG_PATH = BASE_DIR / CONFIG_PATH
+if not CONFIG_PATH.exists():
+    sys.exit(f"[x] No such config: {CONFIG_PATH}")
+
+with open(CONFIG_PATH) as _f:
+    CONFIG = yaml.safe_load(_f)
+
+# Every tenant on this POS shares the scraping logic but must NOT share state:
+# one storage_state per account, or logging into the second silently invalidates
+# the first. tenant defaults to "sapapad" so BMD's existing state dir is reused.
+TENANT = str((CONFIG.get("tenant") or {}).get("slug") or "sapapad").strip()
+STATE_DIR = BASE_DIR / "state" / TENANT
 
 for d in (DOWNLOADS_DIR, OUTPUT_DIR, STATE_DIR, LOGS_DIR, SCREENSHOTS_DIR, MAPPINGS_DIR):
     d.mkdir(parents=True, exist_ok=True)
 
 STORAGE_STATE_PATH = STATE_DIR / "storage_state.json"
 CHECKPOINT_PATH    = STATE_DIR / "checkpoint.json"
-
-with open(BASE_DIR / "sapapad_config.yaml") as _f:
-    CONFIG = yaml.safe_load(_f)
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -144,14 +174,14 @@ _verbose = False
 def _init_logger(verbose: bool) -> None:
     global _log_path, _verbose
     _verbose = verbose
-    _log_path = LOGS_DIR / f"sapapad_{RUN_ID}.jsonl"
+    _log_path = LOGS_DIR / f"{TENANT}_{RUN_ID}.jsonl"
 
 
 def log(stage: str, step: str, outcome: str, duration_ms: int = 0, extra: dict = None) -> None:
     entry = {
         "ts": datetime.utcnow().isoformat(),
         "run_id": RUN_ID,
-        "pipeline": "sapapad",
+        "pipeline": TENANT,
         "stage": stage,
         "step": step,
         "outcome": outcome,
@@ -175,7 +205,7 @@ def log(stage: str, step: str, outcome: str, duration_ms: int = 0, extra: dict =
 # ──────────────────────────────────────────────────────────────────────────────
 
 def screenshot(page: Page, stage: str, label: str) -> None:
-    run_dir = SCREENSHOTS_DIR / f"sapapad_{RUN_ID}"
+    run_dir = SCREENSHOTS_DIR / f"{TENANT}_{RUN_ID}"
     run_dir.mkdir(exist_ok=True)
     path = run_dir / f"{stage}_{label}.png"
     try:
@@ -286,14 +316,21 @@ def stage_auth(page: Page, context, force_login: bool) -> None:
         if _verbose:
             print("  [→] Cached session expired — re-authenticating...")
 
-    username = os.environ.get("SAPAPAD_USERNAME", "")
-    company  = os.environ.get("SAPAPAD_COMPANY", "")
-    password = os.environ.get("SAPAPAD_PASSWORD", "")
+    # Which .env keys hold this tenant's credentials. Defaults keep BMD on
+    # SAPAPAD_* so nothing changes for the existing client.
+    _auth = CONFIG.get("auth") or {}
+    user_key = _auth.get("username_env", "SAPAPAD_USERNAME")
+    comp_key = _auth.get("company_env", "SAPAPAD_COMPANY")
+    pass_key = _auth.get("password_env", "SAPAPAD_PASSWORD")
+
+    username = os.environ.get(user_key, "")
+    company  = os.environ.get(comp_key, "")
+    password = os.environ.get(pass_key, "")
 
     if not username:
-        raise AuthError("SAPAPAD_USERNAME is not set in your .env file.")
+        raise AuthError(f"{user_key} is not set in your .env file.")
     if not password:
-        raise AuthError("SAPAPAD_PASSWORD is not set in your .env file.")
+        raise AuthError(f"{pass_key} is not set in your .env file.")
 
     try:
         page.goto(CONFIG["portal"]["login_url"], wait_until="domcontentloaded", timeout=30_000)
@@ -418,14 +455,47 @@ def _select_report_date(page: Page) -> None:
         print(f"  [date] custom range {start.strftime(fmt)} -> {end.strftime(fmt)}")
 
 
+def modifiers_config(args) -> Optional[dict]:
+    """
+    The modifiers block if this tenant has one and it was not disabled.
+
+    Returns None for BMD and anyone else whose config predates the modifiers
+    work, so those runs are untouched.
+    """
+    cfg = CONFIG.get("modifiers") or {}
+    if not cfg.get("enabled"):
+        return None
+    if getattr(args, "no_modifiers", False):
+        return None
+    return cfg
+
+
 def stage_navigate_and_download(
     page: Page,
     location_id: Optional[str] = None,
     branch_name: Optional[str] = None,
+    section: Optional[dict] = None,
 ) -> pathlib.Path:
+    """
+    Drive one report's navigation chain and save the CSV it exports.
+
+    `section` selects WHICH report. None means the Top Grossing Items report
+    configured at the top level of the YAML — byte-for-byte the old behaviour.
+    Passing CONFIG["modifiers"] runs that block's own report_url and navigation
+    chain instead, so Marketing -> Top Paid Modifiers reuses this entire
+    function (branch selection, export modal, Saved Reports polling) rather
+    than duplicating it.
+    """
     t0 = time.monotonic()
-    nav_steps  = CONFIG["navigation"]
-    report_url = CONFIG["portal"].get("report_url", "")
+    section      = section or {}
+    is_main      = not section
+    nav_steps    = section.get("navigation") or CONFIG["navigation"]
+    report_url   = section.get("report_url", CONFIG["portal"].get("report_url", ""))
+    # Saved Reports lists one row per generated report, titled
+    # "{label} for {branch}" — the label is what tells the two reports apart
+    # when both have been queued for the same branch in the same run.
+    report_label = section.get("saved_report_label", "Top Grossing Items")
+    file_tag     = section.get("file_tag", "raw")
     dest: Optional[pathlib.Path] = None
 
     try:
@@ -482,21 +552,40 @@ def stage_navigate_and_download(
             elif action == "download_latest":
                 # When running per-branch, find the row specific to this branch.
                 # Otherwise fall back to the first download link on the page.
+                # Saved Reports accumulates one row per queued export, so as
+                # soon as a run fetches both reports "the first Download csv
+                # link on the page" is ambiguous. Prefer the row whose title
+                # matches THIS section's label.
                 if branch_name:
-                    # Saved Reports row text: "Top Grossing Items for {branch_name}"
-                    click_sel = (
-                        f"tr:has-text('Top Grossing Items for {branch_name}') "
+                    # Row text: "{report_label} for {branch_name}"
+                    candidates = [
+                        f"tr:has-text('{report_label} for {branch_name}') "
                         f"a:has-text('Download csv')"
-                    )
+                    ]
                 else:
-                    click_sel = step_cfg["click"]
+                    candidates = [
+                        f"tr:has-text('{report_label}') a:has-text('Download csv')"
+                    ]
+
+                # The configured bare selector stays as a fallback for the main
+                # report only — it preserves the proven path for BMD. It is
+                # deliberately NOT offered to the modifiers section: there the
+                # grossing row is already on the page, so falling back would
+                # quietly download it a second time and append a duplicate of
+                # the grossing items instead of the modifiers.
+                if is_main:
+                    candidates.append(step_cfg["click"])
 
                 poll_attempts = int(step_cfg.get("poll_attempts", 1))
                 poll_interval = int(step_cfg.get("poll_interval_s", 15))
 
-                # Poll: refresh the page until the download link appears
+                # Poll: refresh the page until one of the candidates appears
+                click_sel = None
                 for attempt in range(poll_attempts):
-                    if page.query_selector(click_sel):
+                    click_sel = next(
+                        (c for c in candidates if page.query_selector(c)), None
+                    )
+                    if click_sel:
                         break
                     if attempt < poll_attempts - 1:
                         if _verbose:
@@ -507,10 +596,10 @@ def stage_navigate_and_download(
                         page.reload(wait_until="domcontentloaded", timeout=30_000)
                         page.wait_for_load_state("networkidle", timeout=20_000)
                         page.wait_for_timeout(2_000)
-                else:
+                if not click_sel:
                     raise NavError(
                         f"Download link not found after {poll_attempts} attempts. "
-                        f"Selector: {click_sel}"
+                        f"Selectors tried: {candidates}"
                     )
 
                 page.wait_for_selector(click_sel, state="visible", timeout=15_000)
@@ -522,7 +611,7 @@ def stage_navigate_and_download(
 
                 download = dl_info.value
                 suffix = pathlib.Path(download.suggested_filename).suffix or ".csv"
-                dest = DOWNLOADS_DIR / f"sapapad_{branch_slug}_{RUN_ID}_raw{suffix}"
+                dest = DOWNLOADS_DIR / f"{TENANT}_{branch_slug}_{RUN_ID}_{file_tag}{suffix}"
                 download.save_as(str(dest))
 
             else:
@@ -541,10 +630,13 @@ def stage_navigate_and_download(
     if not dest.exists() or dest.stat().st_size == 0:
         raise NavError(f"Downloaded file is empty or missing: {dest}")
 
-    log("nav", "download", "ok",
+    log("nav", f"download:{file_tag}", "ok",
         duration_ms=int((time.monotonic() - t0) * 1000),
         extra={"file": str(dest), "size_bytes": dest.stat().st_size})
-    write_checkpoint(2, {"raw_file": str(dest)})
+    # Only the main report advances the checkpoint: a modifiers download is a
+    # supplement to that run, not a stage of its own.
+    if is_main:
+        write_checkpoint(2, {"raw_file": str(dest)})
     return dest
 
 
@@ -750,8 +842,140 @@ def _match_item_codes(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 
-def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -> tuple:
-    """Returns (out_path, row_count, report_date_str)."""
+
+# ──────────────────────────────────────────────────────────────────────────────
+# Paid Modifiers (Marketing → Top Paid Modifiers)
+# ──────────────────────────────────────────────────────────────────────────────
+
+def _pick_column(df: pd.DataFrame, candidates, what: str,
+                 required: bool = True) -> Optional[str]:
+    """
+    Return the first candidate header actually present, ignoring case/spacing.
+
+    The modifiers export was specced from the written SOP rather than from a
+    captured file, so every field lists several plausible headers. When none
+    match, the error names both what was wanted and what the file really
+    contains — the one fact needed to correct the config after a --debug run.
+    """
+    norm = {str(c).strip().lower(): c for c in df.columns}
+    for cand in candidates or []:
+        hit = norm.get(str(cand).strip().lower())
+        if hit:
+            return hit
+    if required:
+        raise TransformError(
+            f"Modifiers CSV has no {what} column. Tried {list(candidates or [])}; "
+            f"the file has {list(df.columns)}. Correct "
+            f"modifiers.source_columns.{what} in {CONFIG_PATH.name}."
+        )
+    return None
+
+
+def _read_modifiers_csv(raw_path: pathlib.Path) -> tuple:
+    """Load the modifiers CSV and resolve its columns → (df, name, qty, incl, excl)."""
+    mod_cfg = CONFIG.get("modifiers") or {}
+    src     = mod_cfg.get("source_columns") or {}
+
+    df = pd.read_csv(raw_path, header=_detect_header_row(raw_path), on_bad_lines="skip")
+    df.columns = [str(c).strip() for c in df.columns]
+
+    name_col = _pick_column(df, src.get("name"), "name")
+    qty_col  = _pick_column(df, src.get("qty"),  "qty")
+    incl_col = _pick_column(df, src.get("incl"), "incl")
+    excl_col = _pick_column(df, src.get("excl"), "excl", required=False)
+
+    df = df[
+        df[name_col].notna() &
+        (df[name_col].astype(str).str.strip() != "")
+    ].copy()
+    df.reset_index(drop=True, inplace=True)
+
+    return df, name_col, qty_col, incl_col, excl_col
+
+
+def _to_number(series: pd.Series) -> pd.Series:
+    """Strip currency symbols and thousands separators, then coerce to float."""
+    return pd.to_numeric(
+        series.astype(str).str.replace(r"[^\d.\-]", "", regex=True).replace("", "0"),
+        errors="coerce",
+    ).fillna(0.0)
+
+
+def _build_modifier_rows(raw_path: pathlib.Path, report_date: str) -> pd.DataFrame:
+    """
+    Turn the Top Paid Modifiers CSV into Supy-template rows.
+
+    Two things differ from the grossing-items transform:
+
+      * There is no VLOOKUP. Per the SOP the modifier NAME doubles as its POS
+        code, so POS Item ID and POS Item Name both carry it. Modifiers are not
+        in the item master, so joining against it would blank every row.
+
+      * Sapaad reports paid modifiers at gross only. Excl. tax is therefore
+        derived as incl / tax_divisor (1.05 for the UAE's 5% VAT). If the export
+        ever does carry an excl-tax column, it is used verbatim instead —
+        a stated value is never re-derived from its own gross.
+    """
+    mod_cfg = CONFIG.get("modifiers") or {}
+    df, name_col, qty_col, incl_col, excl_col = _read_modifiers_csv(raw_path)
+
+    names = df[name_col].astype(str).str.strip()
+    qty   = _to_number(df[qty_col]).round(0).astype(int)
+    incl  = _to_number(df[incl_col]).round(2)
+
+    if excl_col:
+        excl = _to_number(df[excl_col]).round(2)
+        tax_note = f"column {excl_col!r}"
+    else:
+        divisor = float(mod_cfg.get("tax_divisor", 1.05))
+        if divisor <= 0:
+            raise TransformError(
+                f"modifiers.tax_divisor must be greater than 0, got {divisor}."
+            )
+        excl = (incl / divisor).round(2)
+        tax_note = f"incl / {divisor}"
+
+    out = pd.DataFrame({
+        "Sales Date *":            report_date,
+        "POS Item ID *":           names,
+        "POS Item Name":           names,
+        "Sold QTY *":              qty,
+        "Total Discount Value":    "",
+        "Total sales excl. tax *": excl,
+        "Total sales incl. tax *": incl,
+        "Order ID":                "",
+        "Sales Type Code":         "",
+        "Parent Item ID":          "",
+    })
+    out.reset_index(drop=True, inplace=True)
+
+    log("transform", "modifiers", "ok",
+        extra={"rows": len(out), "excl_tax_source": tax_note,
+               "incl_total": round(float(incl.sum()), 2)})
+    if _verbose:
+        print(f"  [→] {len(out)} modifier rows (excl. tax from {tax_note})")
+
+    return out
+
+
+def _modifier_raw_totals(raw_path: pathlib.Path) -> tuple:
+    """(row_count, incl_tax_total) for the modifiers CSV — used by verification."""
+    df, _name, _qty, incl_col, _excl = _read_modifiers_csv(raw_path)
+    return len(df), float(_to_number(df[incl_col]).sum())
+
+
+def stage_transform(
+    raw_path: pathlib.Path,
+    branch_name: Optional[str] = None,
+    modifiers_raw: Optional[pathlib.Path] = None,
+) -> tuple:
+    """
+    Returns (out_path, row_count, report_date_str).
+
+    When `modifiers_raw` is given, the paid-modifier rows are appended beneath
+    the last grossing-item row of the SAME sheet, which is what the SOP
+    describes and what keeps Supy ingesting one file per branch per day.
+    """
     t0 = time.monotonic()
 
     try:
@@ -878,6 +1102,21 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
         extras  = [c for c in df.columns if c not in ordered]
         df = df[ordered + extras]
 
+        # ── Append modifier rows ──────────────────────────────
+        # Appended AFTER the reorder so they line up with the grossing columns
+        # rather than widening the sheet.
+        mod_rows = 0
+        if modifiers_raw is not None:
+            fmt = CONFIG.get("output_date_format", "%d-%b-%Y")
+            mod_df = _build_modifier_rows(
+                modifiers_raw, report_date or target_date().strftime(fmt)
+            )
+            mod_rows = len(mod_df)
+            df = pd.concat(
+                [df, mod_df.reindex(columns=df.columns, fill_value="")],
+                ignore_index=True,
+            )
+
         # ── Export ────────────────────────────────────────────
         # The date in the filename is the SALES date, not the run date. It was
         # datetime.now() until 2026-09-03, which meant a file named
@@ -886,7 +1125,7 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
         # today, overwriting the current day's report with historic data.
         sales_date = target_date().strftime("%Y-%m-%d")
         branch_slug = re.sub(r"[^A-Za-z0-9_-]", "_", branch_name) if branch_name else "all_locations"
-        out_path   = OUTPUT_DIR / f"sapapad_{branch_slug}_{sales_date}_{RUN_ID[:8]}.xlsx"
+        out_path   = OUTPUT_DIR / f"{TENANT}_{branch_slug}_{sales_date}_{RUN_ID[:8]}.xlsx"
         df.to_excel(str(out_path), index=False, engine="openpyxl")
 
     except (KeyError, ValueError, TypeError) as exc:
@@ -898,7 +1137,8 @@ def stage_transform(raw_path: pathlib.Path, branch_name: Optional[str] = None) -
 
     log("transform", "export", "ok",
         duration_ms=int((time.monotonic() - t0) * 1000),
-        extra={"output": str(out_path), "rows": len(df)})
+        extra={"output": str(out_path), "rows": len(df),
+               "grossing_rows": len(df) - mod_rows, "modifier_rows": mod_rows})
     write_checkpoint(3, {"output_file": str(out_path)})
 
     if _verbose:
@@ -916,6 +1156,7 @@ def stage_verify(
     out_path: pathlib.Path,
     page: Optional[Page] = None,
     branch_name: Optional[str] = None,
+    modifiers_raw_path: Optional[pathlib.Path] = None,
 ) -> VerificationResult:
     """
     3-layer verification. Never raises — always returns a VerificationResult.
@@ -923,6 +1164,8 @@ def stage_verify(
     Layer 1 — Raw → output integrity
         Row count and revenue sum must agree between the downloaded CSV
         and the transformed output (within a 5% / 1% tolerance respectively).
+        When modifier rows were appended, both raw files are counted — the
+        output legitimately holds more rows than the grossing CSV alone.
 
     Layer 2 — Business rules
         Sales Date = yesterday, no negative quantities, excl. tax <= incl. tax,
@@ -936,6 +1179,18 @@ def stage_verify(
     t0 = time.monotonic()
     result = VerificationResult()
 
+    # Tallied once, used by two layers: Layer 1 needs it for the row and
+    # revenue totals, Layer 2 to exclude modifier rows from the item-ID match
+    # rate (they carry their own name as their ID, so counting them would
+    # dilute a completely broken item mapping into looking acceptable).
+    mod_count = 0
+    mod_total = 0.0
+    if modifiers_raw_path is not None:
+        try:
+            mod_count, mod_total = _modifier_raw_totals(modifiers_raw_path)
+        except Exception as exc:
+            result.warn(f"Could not read modifiers CSV for verification: {exc}")
+
     # ── Layer 1: Raw → Output integrity ──────────────────────────────────────
     try:
         raw_df = pd.read_csv(raw_path, on_bad_lines="skip")
@@ -947,7 +1202,10 @@ def stage_verify(
             ].copy()
 
         out_df = pd.read_excel(out_path, engine="openpyxl")
-        raw_count = len(raw_df)
+        # The output is grossing + modifier rows. Comparing it against the
+        # grossing CSV alone would blow the 5% row gate on every branch and
+        # under-report the revenue sum by exactly the paid-modifier value.
+        raw_count = len(raw_df) + mod_count
         out_count = len(out_df)
 
         if raw_count != out_count:
@@ -965,7 +1223,10 @@ def stage_verify(
                 )
 
         if "Total Amount" in raw_df.columns and "Total sales incl. tax *" in out_df.columns:
-            raw_total = pd.to_numeric(raw_df["Total Amount"], errors="coerce").sum()
+            raw_total = (
+                pd.to_numeric(raw_df["Total Amount"], errors="coerce").sum()
+                + mod_total
+            )
             out_total = pd.to_numeric(out_df["Total sales incl. tax *"], errors="coerce").sum()
             if raw_total > 0:
                 diff_pct = abs(raw_total - out_total) / raw_total * 100
@@ -1018,18 +1279,25 @@ def stage_verify(
                     f"tax amount cannot be negative."
                 )
 
-        if "POS Item ID *" in out_df.columns and len(out_df) > 0:
-            matched = out_df["POS Item ID *"].notna().sum()
-            match_rate = matched / len(out_df) * 100
+        # Modifier rows sit at the tail of the sheet and always carry an ID.
+        # The match rate only means anything for the grossing rows above them.
+        grossing_df = out_df.iloc[:len(out_df) - mod_count] if mod_count else out_df
+        mapping_file = ((CONFIG.get("item_code_mapping") or {})
+                        .get("file", "the item code mapping"))
+
+        if "POS Item ID *" in grossing_df.columns and len(grossing_df) > 0:
+            matched = grossing_df["POS Item ID *"].notna().sum()
+            total   = len(grossing_df)
+            match_rate = matched / total * 100
             if match_rate < 80:
                 result.fail(
-                    f"Item ID match rate is {match_rate:.0f}% ({matched}/{len(out_df)} rows). "
-                    f"Update mappings/sapapad_item_codes.csv."
+                    f"Item ID match rate is {match_rate:.0f}% ({matched}/{total} "
+                    f"grossing rows). Update {mapping_file}."
                 )
             elif match_rate < 95:
                 result.warn(
-                    f"Item ID match rate is {match_rate:.0f}% ({matched}/{len(out_df)} rows). "
-                    f"Some items may be missing from the mapping file."
+                    f"Item ID match rate is {match_rate:.0f}% ({matched}/{total} "
+                    f"grossing rows). Some items may be missing from {mapping_file}."
                 )
 
         if "Total sales incl. tax *" in out_df.columns and len(out_df) > 0:
@@ -1054,7 +1322,14 @@ def stage_verify(
         result.warn(f"Layer 2 business rule checks could not run: {exc}")
 
     # ── Layer 3: Portal spot-check ────────────────────────────────────────────
-    if page is not None:
+    # Skipped once modifiers are in the sheet: the portal's Top Grossing table
+    # knows nothing about them, so its row count and total would never match.
+    if page is not None and modifiers_raw_path is not None:
+        result.warn(
+            "Layer 3 portal spot-check skipped — the output includes modifier "
+            "rows, which the Top Grossing table does not show."
+        )
+    elif page is not None:
         try:
             report_url = CONFIG["portal"].get("report_url", "")
             if report_url:
@@ -1411,7 +1686,11 @@ def _main_resend(args) -> int:
     run_id = args.resend_run_id
     print(f"\n[Sapapad Resend] run_id={run_id}\n")
 
-    raw_files = sorted(DOWNLOADS_DIR.glob(f"sapapad_*_{run_id}_raw.csv"))
+    # Tenant-scoped: the old "sapapad_*" glob matched nothing for Falafel,
+    # Heal or Pinza, so --resend-run-id always reported "no raw files found".
+    # The modifiers files end in _modifiers_raw.csv, so they are not picked up
+    # here as reports in their own right — they are paired in below.
+    raw_files = sorted(DOWNLOADS_DIR.glob(f"{TENANT}_*_{run_id}_raw.csv"))
     if not raw_files:
         print(f"[✗] No raw files found for run_id={run_id}", file=sys.stderr)
         return 1
@@ -1419,10 +1698,12 @@ def _main_resend(args) -> int:
     print(f"[Resend] Found {len(raw_files)} raw files to process\n")
     failed = []
 
+    mod_cfg = modifiers_config(args)
+
     for raw_file in raw_files:
         stem = raw_file.stem  # e.g. sapapad_BMD_Business_Bay_20260613T040308_cd6f98df_raw
-        # Strip leading "sapapad_" and trailing "_{run_id}_raw"
-        inner = stem.removeprefix("sapapad_")
+        # Strip leading "{tenant}_" and trailing "_{run_id}_raw"
+        inner = stem.removeprefix(f"{TENANT}_")
         suffix = f"_{run_id}_raw"
         branch_slug = inner.removesuffix(suffix) if inner.endswith(suffix) else inner
         branch_name = branch_slug.replace("_", " ")
@@ -1430,9 +1711,24 @@ def _main_resend(args) -> int:
         print(f"{'─'*60}")
         print(f"[Branch] {branch_name}")
 
+        # Pair each grossing download with the modifiers download from the
+        # same run and branch, if one was captured.
+        mod_file = None
+        if mod_cfg:
+            sibling = raw_file.with_name(
+                raw_file.name.replace("_raw.csv", "_modifiers_raw.csv")
+            )
+            if sibling.exists():
+                mod_file = sibling
+            else:
+                print(f"  [!] No modifiers file for this branch — "
+                      f"grossing items only.")
+
         try:
             print(f"[Stage 3] Transforming...")
-            out_file, row_count, report_date = stage_transform(raw_file, branch_name=branch_name)
+            out_file, row_count, report_date = stage_transform(
+                raw_file, branch_name=branch_name, modifiers_raw=mod_file
+            )
             print(f"[Stage 3] ✓ {row_count} rows → {out_file.name}\n")
 
             if row_count == 0:
@@ -1440,7 +1736,9 @@ def _main_resend(args) -> int:
                 continue
 
             print(f"[Stage 3.5] Verifying...")
-            vr = stage_verify(raw_file, out_file, page=None, branch_name=branch_name)
+            vr = stage_verify(raw_file, out_file, page=None,
+                              branch_name=branch_name,
+                              modifiers_raw_path=mod_file)
 
             if not args.no_email:
                 print(f"[Stage 4] Sending email...")
@@ -1468,7 +1766,11 @@ def _main_resend(args) -> int:
 
 def _main_per_branch(args) -> int:
     headless = not args.debug
+    mod_cfg  = modifiers_config(args)
     print(f"\n[Sapapad Per-Branch Pipeline] run_id={RUN_ID}\n")
+    if mod_cfg:
+        print("[Config] Paid modifiers enabled — output will carry grossing "
+              "items with modifier rows appended.\n")
 
     failed_branches = []
 
@@ -1528,10 +1830,35 @@ def _main_per_branch(args) -> int:
                     )
                     print(f"[Stage 2] ✓ Downloaded → {raw_file.name}\n")
 
+                    # Stage 2b — Paid modifiers (Marketing → Top Paid Modifiers).
+                    # A failure here must not cost us the grossing report, which
+                    # is the primary deliverable — warn and carry on without it.
+                    mod_raw = None
+                    if mod_cfg:
+                        print(f"[Stage 2b] Downloading modifiers for {loc_name}...")
+                        try:
+                            page.goto(mod_cfg.get("report_url", ""),
+                                      wait_until="domcontentloaded", timeout=30_000)
+                            page.wait_for_load_state("networkidle", timeout=20_000)
+                            page.wait_for_timeout(1_500)
+                            mod_raw = stage_navigate_and_download(
+                                page, location_id=loc_id, branch_name=loc_name,
+                                section=mod_cfg,
+                            )
+                            print(f"[Stage 2b] ✓ Downloaded → {mod_raw.name}\n")
+                        except Exception as exc:
+                            log("nav", "modifiers", "warning",
+                                extra={"branch": loc_name, "error": str(exc)})
+                            print(f"[Stage 2b] [!] Modifiers unavailable for "
+                                  f"{loc_name}: {exc}\n"
+                                  f"           Continuing with grossing items only.\n",
+                                  file=sys.stderr)
+                            mod_raw = None
+
                     # Stage 3 — Transform
                     print(f"[Stage 3] Transforming...")
                     out_file, row_count, report_date = stage_transform(
-                        raw_file, branch_name=loc_name
+                        raw_file, branch_name=loc_name, modifiers_raw=mod_raw
                     )
                     print(f"[Stage 3] ✓ {row_count} rows → {out_file.name}\n")
 
@@ -1543,7 +1870,9 @@ def _main_per_branch(args) -> int:
                     # after download the browser is on Saved Reports and re-navigating
                     # back shows all-locations data, not just this branch)
                     print(f"[Stage 3.5] Verifying {loc_name}...")
-                    vr = stage_verify(raw_file, out_file, page=None, branch_name=loc_name)
+                    vr = stage_verify(raw_file, out_file, page=None,
+                                      branch_name=loc_name,
+                                      modifiers_raw_path=mod_raw)
 
                     # Stage 4 — Email
                     if not args.no_email:
@@ -1584,6 +1913,10 @@ def _main_per_branch(args) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Sapapad POS Automation Pipeline")
+    parser.add_argument("--config", metavar="PATH", default=None,
+                        help="Tenant config (default: sapapad_config.yaml). "
+                             "Read at import time, so it is also parsed from "
+                             "sys.argv before argparse runs.")
     parser.add_argument("--debug", action="store_true",
                         help="Run with headed browser and verbose logging")
     parser.add_argument("--from-stage", type=int, default=1, metavar="N",
@@ -1600,6 +1933,9 @@ def main() -> int:
                         help="Run pipeline for each branch individually")
     parser.add_argument("--limit", type=int, default=0, metavar="N",
                         help="Process only the first N branches (for test runs)")
+    parser.add_argument("--no-modifiers", action="store_true",
+                        help="Skip the Top Paid Modifiers report even if the "
+                             "config enables it — grossing items only")
     parser.add_argument("--resend-run-id", metavar="RUN_ID",
                         help="Re-run transform+email for all raw files from a prior run (no browser needed)")
     args = parser.parse_args()
@@ -1627,9 +1963,14 @@ def main() -> int:
     if args.per_branch:
         return _main_per_branch(args)
 
+    mod_cfg = modifiers_config(args)
     print(f"\n[Sapapad Pipeline] run_id={RUN_ID}  from_stage={from_stage}\n")
+    if mod_cfg:
+        print("[Config] Paid modifiers enabled — output will carry grossing "
+              "items with modifier rows appended.\n")
 
     raw_file: Optional[pathlib.Path] = None
+    mod_file: Optional[pathlib.Path] = None
 
     if from_stage >= 3:
         checkpoint = read_checkpoint()
@@ -1637,11 +1978,18 @@ def main() -> int:
         if raw_file_str:
             raw_file = pathlib.Path(raw_file_str)
         else:
+            # The glob was hardcoded to "sapapad_*" — it found nothing for any
+            # tenant but BMD, silently falling through to the "run from stage 1"
+            # error even when a perfectly good download was sitting there.
             candidates = sorted(
-                DOWNLOADS_DIR.glob("sapapad_*_raw.*"), key=lambda p: p.stat().st_mtime
+                DOWNLOADS_DIR.glob(f"{TENANT}_*_raw.*"), key=lambda p: p.stat().st_mtime
             )
             if candidates:
                 raw_file = candidates[-1]
+
+        mod_file_str = checkpoint.get("modifiers_raw")
+        if mod_cfg and mod_file_str and pathlib.Path(mod_file_str).exists():
+            mod_file = pathlib.Path(mod_file_str)
         if not raw_file or not raw_file.exists():
             print("[✗] --from-stage 3 requires an existing raw download. "
                   "Run from stage 1 or 2 first.", file=sys.stderr)
@@ -1685,6 +2033,28 @@ def main() -> int:
                     browser.close()
                     return 2
 
+                # ── Stage 2b: Paid modifiers ───────────────────────
+                if mod_cfg:
+                    print("[Stage 2b] Navigating to modifiers report...")
+                    try:
+                        page.goto(mod_cfg.get("report_url", ""),
+                                  wait_until="domcontentloaded", timeout=30_000)
+                        page.wait_for_load_state("networkidle", timeout=20_000)
+                        page.wait_for_timeout(1_500)
+                        mod_file = stage_navigate_and_download(page, section=mod_cfg)
+                        print(f"[Stage 2b] ✓ Downloaded → {mod_file}\n")
+                        write_checkpoint(2, {"raw_file": str(raw_file),
+                                             "modifiers_raw": str(mod_file)})
+                    except Exception as exc:
+                        # Same call as per-branch mode: the grossing report is
+                        # the deliverable, so a missing modifiers export degrades
+                        # the run rather than failing it.
+                        log("nav", "modifiers", "warning", extra={"error": str(exc)})
+                        print(f"[Stage 2b] [!] Modifiers unavailable: {exc}\n"
+                              f"           Continuing with grossing items only.\n",
+                              file=sys.stderr)
+                        mod_file = None
+
                 browser.close()
 
         except Exception as exc:
@@ -1695,7 +2065,9 @@ def main() -> int:
     # ── Stage 3: Transform ─────────────────────────────────────────
     print("[Stage 3] Transforming raw data + matching item codes...")
     try:
-        out_file, row_count, report_date = stage_transform(raw_file)
+        out_file, row_count, report_date = stage_transform(
+            raw_file, modifiers_raw=mod_file
+        )
         print(f"[Stage 3] ✓ Output → {out_file}\n")
     except TransformError as exc:
         log("transform", "transform", "error", extra={"error": str(exc)})
@@ -1704,7 +2076,7 @@ def main() -> int:
 
     # ── Stage 3.5: Verify ──────────────────────────────────────────
     print("[Stage 3.5] Verifying output...")
-    vr = stage_verify(raw_file, out_file)
+    vr = stage_verify(raw_file, out_file, modifiers_raw_path=mod_file)
 
     # ── Stage 4: Email ─────────────────────────────────────────────
     if not args.no_email:
