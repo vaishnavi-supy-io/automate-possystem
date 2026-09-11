@@ -27,8 +27,12 @@ selectors:
 #   wait_seconds     — sleep N seconds (for async ops like export queue)
 #   accept_modal     — click an OK button inside an HTML modal
 #   goto_url         — navigate to a URL
-#   download_latest  — click first download link; polls page up to poll_attempts
-#                      times (with poll_interval_s between each) if not found yet
+#   download_latest  — download from the Saved Reports row whose title matches
+#                      this report's label (and branch, in --per-branch mode),
+#                      falling back to the bare `click` selector for the main
+#                      report only. Polls up to poll_attempts times, waiting
+#                      poll_interval_s between attempts, if the row is not
+#                      generated yet.
 # -------------------------------------------------------
 # -------------------------------------------------------
 # DATE FILTER

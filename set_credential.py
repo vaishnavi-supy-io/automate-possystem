@@ -22,7 +22,10 @@ import getpass
 import os
 import pathlib
 import re
+import shutil
 import sys
+import tempfile
+from datetime import datetime
 
 BASE_DIR = pathlib.Path(__file__).parent
 ENV_PATH = BASE_DIR / ".env"
@@ -83,9 +86,63 @@ def read_env_lines() -> list:
     return ENV_PATH.read_text().splitlines()
 
 
+def _write_env_atomically(text: str) -> None:
+    """
+    Replace .env's contents without any window in which it is truncated.
+
+    On 11 Sep 2026 .env lost 27 of its 31 keys — every portal credential plus
+    the Gmail sender — and the backup taken minutes later captured the damage
+    rather than preventing it. A plain write_text() on the live file is the one
+    code path that can do that: it truncates first and writes second, so an
+    interruption, a full disk, or two concurrent callers leaves a short file
+    and the credentials are gone for good (.env is gitignored, so there is no
+    other copy).
+
+    So: write a temp file in the SAME directory (os.replace is only atomic
+    within a filesystem), fsync it, then rename it over .env. A reader either
+    sees the whole old file or the whole new one, never a truncated one. The
+    previous contents are copied aside first, which is cheap insurance for a
+    file that cannot be regenerated.
+    """
+    ENV_PATH.parent.mkdir(parents=True, exist_ok=True)
+
+    if ENV_PATH.exists() and ENV_PATH.stat().st_size > 0:
+        backup = ENV_PATH.with_name(
+            f".env.bak.{datetime.now().strftime('%Y%m%dT%H%M%S')}"
+        )
+        shutil.copy2(ENV_PATH, backup)
+        backup.chmod(0o600)
+
+    fd, tmp_name = tempfile.mkstemp(dir=str(ENV_PATH.parent), prefix=".env.", suffix=".tmp")
+    tmp = pathlib.Path(tmp_name)
+    try:
+        os.fchmod(fd, 0o600)          # never briefly world-readable
+        with os.fdopen(fd, "w") as fh:
+            fh.write(text)
+            fh.flush()
+            os.fsync(fh.fileno())     # durable before the rename, not after
+        os.replace(tmp, ENV_PATH)     # atomic within the directory
+    except BaseException:
+        tmp.unlink(missing_ok=True)
+        raise
+
+    ENV_PATH.chmod(0o600)
+
+
 def set_key(key: str, value: str) -> str:
     """Replace or append KEY=value. Returns 'updated' or 'added'."""
     lines = read_env_lines()
+
+    # A .env that exists with bytes in it but reads back as zero lines means
+    # the read failed, not that the file is empty. Carrying on would write out
+    # just the one new key, silently replacing every other credential — which
+    # is the shape of the 11 Sep loss. Stop instead.
+    if not lines and ENV_PATH.exists() and ENV_PATH.stat().st_size > 0:
+        raise RuntimeError(
+            f"Refusing to rewrite .env while setting {key}: the file is "
+            f"{ENV_PATH.stat().st_size} bytes on disk but read back as empty."
+        )
+
     prefix = f"{key}="
     found = False
     out = []
@@ -98,9 +155,8 @@ def set_key(key: str, value: str) -> str:
     if not found:
         out.append(f"{key}={value}")
 
-    ENV_PATH.write_text("\n".join(out) + "\n")
     # Owner-only: this file holds the customer's portal credentials.
-    ENV_PATH.chmod(0o600)
+    _write_env_atomically("\n".join(out) + "\n")
     return "updated" if found else "added"
 
 

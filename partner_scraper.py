@@ -48,7 +48,7 @@ import sys
 import time
 import traceback
 import uuid
-from urllib.parse import quote
+from urllib.parse import parse_qsl, quote, urlencode, urlparse, urlunparse
 from datetime import datetime, timedelta
 from email.mime.application import MIMEApplication
 from email.mime.multipart import MIMEMultipart
@@ -1042,6 +1042,37 @@ def _switch_business(page: Page, cfg: dict, business: dict) -> None:
         ) from exc
 
 
+def _page_url(orders_url: str, param: str, number: int) -> str:
+    """
+    orders_url with ?<param>=<number>, replacing any value already there.
+
+    Some portals paginate by URL alone and expose no clickable pager (JustEat
+    Business: "?tab=Past&page=1"). Rewriting the param is safer than string
+    surgery — it keeps every other query param (tab=Past) intact, and pinning
+    page=1 in config no longer caps the walk at the first page.
+    """
+    parts = urlparse(orders_url)
+    query = [(k, v) for k, v in parse_qsl(parts.query, keep_blank_values=True)
+             if k != param]
+    query.append((param, str(number)))
+    return urlunparse(parts._replace(query=urlencode(query)))
+
+
+def _row_fingerprint(rows: list, sel: dict) -> str:
+    """
+    Identity of a list page, used to detect a portal that ignores a too-high
+    page number and silently re-serves the last page — which would otherwise
+    duplicate every order on it until max_pages.
+    """
+    refs = []
+    for row in rows[:20]:
+        ref = _text_of(row, sel.get("order_reference", "")) or ""
+        if not ref:
+            ref = " ".join((row.text_content() or "").split())[:60]
+        refs.append(ref)
+    return "|".join(refs)
+
+
 def _collect_order_links(page: Page, cfg: dict,
                          date_from: datetime, date_to: datetime) -> list:
     """
@@ -1056,12 +1087,26 @@ def _collect_order_links(page: Page, cfg: dict,
     # Feedr's rows have no href — they are click-to-open SPA rows.
     open_mode = (cfg.get("orders", {}) or {}).get("open_mode", "href")
 
-    wanted, seen_pages, skipped = [], 0, {"status": 0, "date": 0}
+    wanted, seen_pages, skipped = [], 0, {"status": 0, "date": 0, "duplicate": 0}
+    # Identities already collected. A list that shifts between page loads (a
+    # new order arriving, an unstable sort) shows the same order on the end of
+    # one page and the start of the next — measured on &Dine 2026-09-11, where
+    # SAT-32L8L came back twice and its 9 lines were written twice, booking
+    # £1,230.58 against a £732.35 order. Pagination makes this reachable, so
+    # the guard lives here rather than in the caller.
+    seen_orders = set()
     # True only when the cap stopped us with a further page still available.
     # Reaching max_pages is NOT itself truncation: a portal with no pager
     # (Feedr — one list bounded by a date filter) legitimately reads one
     # "page" and is complete.
     truncated = False
+
+    pager = cfg.get("pagination", {}) or {}
+    url_param = pager.get("url_param", "")
+    page_delay = float(pager.get("delay_seconds", 0) or 0)
+    stop_when_older = bool(pager.get("stop_when_older", True))
+    orders_url = (cfg.get("portal", {}) or {}).get("orders_url", "")
+    last_fingerprint = ""
 
     while seen_pages < max_pages:
         seen_pages += 1
@@ -1078,6 +1123,16 @@ def _collect_order_links(page: Page, cfg: dict,
             break
 
         rows = page.query_selector_all(sel["order_rows"])
+
+        # A portal asked for a page past the end may silently re-serve the
+        # last one. Without this, every order on it would be collected again
+        # on each remaining iteration.
+        fingerprint = _row_fingerprint(rows, sel)
+        if seen_pages > 1 and fingerprint and fingerprint == last_fingerprint:
+            break
+        last_fingerprint = fingerprint
+
+        oldest_on_page = None
         for idx, row in enumerate(rows):
             status = _text_of(row, sel.get("status", ""))
             if not status_matches(status, keep_status):
@@ -1093,6 +1148,9 @@ def _collect_order_links(page: Page, cfg: dict,
                 raw = _group_date_text(row, sel.get("order_group", ""), group_title)
                 when = parse_date(raw, cfg.get("dates", {}).get("group_format"))
 
+            if when is not None and (oldest_on_page is None or when < oldest_on_page):
+                oldest_on_page = when
+
             have_list_date = bool(sel.get("order_date") or group_title)
             # Only filter by date when the list actually shows one; otherwise
             # defer to the order-detail page.
@@ -1105,7 +1163,13 @@ def _collect_order_links(page: Page, cfg: dict,
 
             if open_mode == "click":
                 # No href to follow — record the row's position so the detail
-                # scrape can re-find and click it.
+                # scrape can re-find and click it. Identity is the reference;
+                # row_index repeats on every page and cannot stand in for it.
+                key = reference_text or f"p{seen_pages}:{idx}"
+                if key in seen_orders:
+                    skipped["duplicate"] += 1
+                    continue
+                seen_orders.add(key)
                 wanted.append({"row_index": idx, "order_date": when,
                                "status": status,
                                "order_total": order_total_text,
@@ -1116,25 +1180,70 @@ def _collect_order_links(page: Page, cfg: dict,
             link_el = row.query_selector(sel["order_link"])
             href = link_el.get_attribute("href") if link_el else None
             if href:
+                if href in seen_orders:
+                    skipped["duplicate"] += 1
+                    continue
+                seen_orders.add(href)
                 wanted.append({"href": href, "order_date": when, "status": status,
                                "order_total": order_total_text,
                                "reference": reference_text})
 
+        # Stop once a whole page predates the window. These lists are
+        # newest-first, so every later page is older still — without this a
+        # backfill walks to max_pages skipping every row.
+        if (stop_when_older and oldest_on_page is not None
+                and oldest_on_page < date_from):
+            break
+
         # Next page, if there is one
         next_sel = sel.get("next_page", "")
-        if not next_sel:
-            break                    # no pager at all — the list is complete
-        nxt = page.query_selector(next_sel)
-        if not nxt or not nxt.is_enabled():
-            break                    # genuinely the last page
+        nxt = page.query_selector(next_sel) if next_sel else None
+        if next_sel:
+            # is_visible() matters as much as is_enabled(): &Dine keeps its
+            # pager buttons in the DOM and merely hides the one past the last
+            # page, so an enabled-only check clicks an invisible element and
+            # blocks for the full 30s click timeout.
+            has_more = bool(nxt and nxt.is_enabled() and nxt.is_visible())
+        elif url_param:
+            # URL paging cannot be probed without loading the page; the
+            # empty-page and fingerprint guards above end the walk instead.
+            has_more = True
+        else:
+            has_more = False         # no pager at all — the list is complete
+        if not has_more:
+            break
         if seen_pages >= max_pages:
             truncated = True         # a next page exists but the cap stops us
             break
+
         try:
-            nxt.click()
+            if next_sel:
+                nxt.click()
+            else:
+                page.goto(_page_url(orders_url, url_param, seen_pages + 1),
+                          wait_until="domcontentloaded",
+                          timeout=int((cfg.get("browser", {}) or {})
+                                      .get("nav_timeout_seconds", 60)) * 1000)
             page.wait_for_load_state("networkidle", timeout=30_000)
         except Exception:
             break
+
+        # Wait for the rows themselves to change, not just for the network to
+        # go quiet. &Dine re-renders its table after networkidle: page 5 served
+        # page 4's rows for over a second, which the repeat-guard above would
+        # read as "past the last page" and end the walk three pages early.
+        settle_deadline = time.monotonic() + 15
+        while next_sel and time.monotonic() < settle_deadline:
+            if _row_fingerprint(page.query_selector_all(sel["order_rows"]),
+                                sel) != fingerprint:
+                break
+            page.wait_for_timeout(500)
+
+        if page_delay:
+            # Deliberate throttle: app.business.just-eat.co.uk began serving
+            # 403 on 2026-09-08 after repeated rapid hits from one IP, and a
+            # backfill loads far more pages than a daily run.
+            time.sleep(page_delay)
 
     if truncated:
         # Never let a pagination cap silently truncate a month of sales.
@@ -1143,9 +1252,14 @@ def _collect_order_links(page: Page, cfg: dict,
               f"HAVE been missed.", file=sys.stderr)
         log("scrape", "pagination_cap_hit", "warn", extra={"max_pages": max_pages})
 
+    if skipped["duplicate"]:
+        print(f"  [→] Ignored {skipped['duplicate']} order(s) already seen on an "
+              f"earlier page.")
+
     log("scrape", "order_list", "ok",
         extra={"orders_found": len(wanted), "pages": seen_pages,
-               "skipped_status": skipped["status"], "skipped_date": skipped["date"]})
+               "skipped_status": skipped["status"], "skipped_date": skipped["date"],
+               "skipped_duplicate": skipped["duplicate"]})
     return wanted
 
 
@@ -1312,9 +1426,17 @@ def stage_scrape(page: Page, cfg: dict, partner: str,
         if _verbose:
             print(f"  [→] {len(orders)} order(s) in range")
 
+        # Pause between order-detail loads. A daily run opens a handful; a
+        # backfill opens hundreds, and app.business.just-eat.co.uk started
+        # serving 403 on 2026-09-08 after exactly that kind of burst.
+        order_delay = float((cfg.get("browser", {}) or {})
+                            .get("request_delay_seconds", 0) or 0)
+
         for i, order in enumerate(orders, 1):
             if _verbose:
                 print(f"  [→] Order {i}/{len(orders)}...")
+            if order_delay and i > 1:
+                time.sleep(order_delay)
             try:
                 items = _scrape_order_detail(page, cfg, order, date_from, date_to)
             except ScrapeError as exc:
