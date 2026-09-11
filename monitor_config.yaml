@@ -1,0 +1,81 @@
+# ============================================================
+# Feed monitoring — detect SILENCE, not just errors
+# ============================================================
+# Every pipeline here already shouts when it fails. What none of them catch is
+# a feed that quietly stops: no error, no alert, just nothing arriving. Two
+# real cases inside two days:
+#
+#   * BMD — GitHub disabled the scheduled workflows for inactivity. Reports
+#     stopped after 18 Aug. Nobody noticed until someone asked for the files
+#     three weeks later.
+#   * BrewDog branch 28d2dae9 — excluded by a filename rule that wanted digits.
+#     77 days of a ~£1,700/day site vanished while every run reported success.
+#
+# Both look exactly like "a quiet period" unless something is explicitly
+# checking that data ARRIVED. That is what this does.
+#
+#     python monitor.py                 # check, print, alert if anything fails
+#     python monitor.py --no-email      # check and print only
+#     python monitor.py --quiet-ok      # exit 0 even when checks fail (for cron)
+# ============================================================
+
+defaults:
+  # A feed reporting yesterday's trade is healthy. Two days silent is a
+  # warning; three is a failure. Tuned to a daily 08:00 cadence.
+  stale_warn_days: 2
+  stale_fail_days: 3
+  # Compare today against the trailing median. A branch that drops to a
+  # fraction of normal is usually a partial file, not a quiet day.
+  volume_window_days: 14
+  volume_drop_warn_pct: 60
+  # A branch seen recently but absent now is the 28d2dae9 failure mode.
+  branch_absence_days: 3
+
+feeds:
+  - name: "Bake My Day (Sapaad)"
+    kind: output
+    pattern: "output/sapapad_*_{date}_*.xlsx"
+    expect_branches: 9
+    note: "9 UAE branches, per-branch files"
+
+  - name: "Smash Tag (SFTP)"
+    kind: sftp
+    config: smashtag_sftp.yaml
+    pattern: "output/Smash_Tag_{date}_*.xlsx"
+
+  - name: "BrewDog UK & Ireland (SFTP)"
+    kind: sftp
+    config: brewdog_sftp.yaml
+    pattern: "output/BrewDog_*_{date}_*.xlsx"
+    # 22 as of 2026-09-11. Deliberately NOT hard-coded as a pass condition —
+    # the monitor learns which branches it has seen and flags disappearances,
+    # because the count changes when sites open or close.
+    note: "22 branches incl. 28d2dae9 (non-numeric id) and 10000016 (Ireland)"
+
+  - name: "Street Food Ltd (delivery partners)"
+    kind: output
+    # An explicit alternation, NOT "{partner}_*" — that expands to "*_*" and
+    # matches every file in output/, so the monitor reports other clients'
+    # branches as missing Street Food partners.
+    # A LIST, not "{partner}_*" — that expands to "*_*" and matches every file
+    # in output/, so the monitor reported other clients' files as missing
+    # Street Food partners.
+    patterns:
+      - "output/deliveroo_sales_*.xlsx"
+      - "output/anddine_*.xlsx"
+      - "output/feedr_*.xlsx"
+      - "output/ordit_*.xlsx"
+      - "output/homecook_*.xlsx"
+      - "output/justeat_business_*.xlsx"
+    # These are genuinely intermittent — Feedr trades about once a week — so
+    # staleness alone is a poor signal. Judged on a longer window.
+    stale_warn_days: 9
+    stale_fail_days: 14
+
+email:
+  recipients:
+    - vaishnavi@supy.io
+  subject_prefix: "[POS MONITOR]"
+  # Only mail when something is wrong. A daily "all fine" message trains
+  # people to ignore it, which is how the BMD outage survived three weeks.
+  only_on_problem: true
