@@ -1,4 +1,33 @@
 # ============================================================
+# Heal Restaurant — Sapaad POS
+# ============================================================
+# Same portal as BMD (pos.sapaad.com), so the scraping logic, selectors and
+# column mapping are inherited wholesale from sapapad_config.yaml. Only the
+# tenant identity and credentials differ.
+#
+#     python sapapad_automation.py --config sapaad_heal_config.yaml --per-branch
+#
+# tenant.slug keeps this account's session under state/heal/. Sharing a
+# storage_state between Sapaad accounts would log one out when the other runs.
+#
+# Branches are NOT listed here — discover_locations() reads them straight off
+# the portal's location dropdown at run time, so --per-branch covers whatever
+# this account exposes without anyone maintaining a list.
+# ============================================================
+
+tenant:
+  slug: "heal"
+  name: "Heal Restaurant"
+
+auth:
+  username_env: SAPAAD_HEAL_RESTAURANT_USERNAME
+  password_env: SAPAAD_HEAL_RESTAURANT_PASSWORD
+  # Sapaad's login may also ask for a company/tenant field. These accounts were
+  # supplied as email + password only, so it is left unset until a run proves
+  # otherwise.
+  company_env: SAPAAD_HEAL_RESTAURANT_COMPANY
+
+# ============================================================
 # Sapapad Automation — Configuration
 # ============================================================
 
@@ -130,7 +159,7 @@ id_column: ""
 # Join on Item Name instead.
 # -------------------------------------------------------
 item_code_mapping:
-  file: "mappings/sapapad_item_codes.csv"
+  file: "mappings/sapaad_heal_item_codes.csv"   # ⚠️ NOT YET SUPPLIED — needs this client's Supy item master
   raw_key: "Item Name"        # column in Sapapad CSV — primary join key
   ref_key: "item_name"        # matching column in mapping file
   raw_category_key: "Category"    # used to disambiguate duplicate item names
@@ -206,3 +235,79 @@ output_column_order:
   - "Parent Item ID"
 
 output_date_format: "%d-%b-%Y"
+
+# -------------------------------------------------------
+# PAID MODIFIERS — Marketing → Top Paid Modifiers
+#
+# Fetched as a second report in the same run, then APPENDED beneath the last
+# grossing-item row of the same sheet, so Supy still ingests one file per
+# branch per day. Remove this block (or pass --no-modifiers) to go back to
+# grossing items alone.
+# -------------------------------------------------------
+modifiers:
+  enabled: true
+
+  # ⚠️  INFERRED — CONFIRM ON THE FIRST --debug RUN.
+  #     Sapaad report URLs follow /reports/<report_name> and the grossing
+  #     report is /reports/top_grossing_items, so this is the expected path for
+  #     the "Top Paid Modifiers" card (the one carrying the NEW banner) on the
+  #     Marketing page. Open that card's corner button in a headed run and
+  #     paste the real URL here if it differs.
+  report_url: "https://pos.sapaad.com/reports/top_paid_modifiers?order_by=totalamount&sort_by=DESC"
+
+  # Saved Reports titles each row "{label} for {branch}". This must match the
+  # portal's wording exactly: it is what separates this export from the
+  # grossing export, which is sitting on the same page by the time we get here.
+  saved_report_label: "Top Paid Modifiers"
+
+  # Keeps the two downloads apart in downloads/.
+  file_tag: "modifiers_raw"
+
+  # Sapaad reports paid modifiers at GROSS only, so excl. tax is derived:
+  #     excl = incl / 1.05          (UAE VAT, 5%)
+  # If the export does turn out to carry an excl-tax column, name it under
+  # source_columns.excl below and it is used verbatim instead — a value the
+  # source states is never re-derived from its own gross.
+  tax_divisor: 1.05
+
+  # Candidate headers, tried in order, case- and space-insensitive. Several are
+  # listed per field because this was specced from the written SOP rather than
+  # from a captured file. A run matching none of them fails with the CSV's real
+  # headers in the error message — which is what you need to trim this down.
+  source_columns:
+    name: ["Modifier Name", "Modifier", "Item Name", "Name"]
+    qty:  ["Total Sold", "Total Qty", "Quantity", "Qty", "Sold"]
+    incl: ["Total Amount", "Total Amount Including Tax", "Total Sales", "Amount"]
+    excl: ["Total Amount Excluding Tax"]
+
+  # Same chain as the grossing report: pick the date, export, dismiss the
+  # modal, wait for the server-side job, then collect it from Saved Reports.
+  navigation:
+    - step: "Select report date"
+      action: select_date
+
+    - step: "Click Export icon"
+      action: click
+      click: "a:has(i.fa-file-excel-o)"
+      wait: "button.closeCsv"
+
+    - step: "Dismiss export modal"
+      action: accept_modal
+      modal_ok_selector: "button.closeCsv"
+      wait: null
+
+    - step: "Wait for export to process"
+      action: wait_seconds
+      seconds: 25
+
+    - step: "Go to Saved Reports"
+      action: goto_url
+      url: "https://pos.sapaad.com/dashboard/saved_reports"
+      wait: null
+
+    - step: "Download CSV"
+      action: download_latest
+      click: "a:has-text('Download csv')"
+      poll_attempts: 6
+      poll_interval_s: 15
+      wait: null

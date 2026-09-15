@@ -1,0 +1,441 @@
+category_name,item_id,item_name,price,item_code,barcode,tags,inventory_tags
+FF Beverages,2376875,Alokozay Cola,6.0,"","","",""
+Cold Beverages,2553142,Alokozay Cola,6.0,"","","",Finished Good
+Beverages - المشروبات  ,2831364, Alokozay Light  الكوزي لايت,4.0,"","","",""
+Beverages - المشروبات  ,2281091,Alokozay    الكوزي,4.0,"","","",Finished Good
+Dishes,2230560,BYO Fattet Hummus,29.0,"","","",Recipe
+KA'AK Sesame Buns,1881748,Chicken Liver KA'AK,15.0,"","","",Recipe
+Pockets,1319309,Chicken Liver Pocket,15.0,"","","",Recipe
+Dishes - الأطباق ,1415552,Chicken Musakhan pl. صحن مسخن دجاج ,31.0,"","","",Recipe
+Sides,2113797,Chili Pickles,6.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837868,Chili potatoes KAAKبطاطا حارة كعك,11.0,"","","",Recipe
+Pockets - البوكيت,2837436,Chili potatoes Pocketبطاطا حارة بوكيت,11.0,"","","",Recipe
+Sandwiches - السندويشات,2415010,Chili potatoes s/wبطاطا حارة ساندويتش,11.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837128,Chili potatoes Wrap بطاطا حارة راب,12.0,"","","",Recipe
+Condiments,2113844,Chili Sauce,2.0,"","","",Recipe
+Falafels,1000159,Classic Falafel 1 Piece ,1.0,"","","",Recipe
+Falafels - الفلافل ,1415478, Classic Falafel pl. صحن فلافل كلاسيك ,10.0,"","","",Recipe
+Sandwiches,1818487,Classic Falafel Sandwich,10.0,"","","",Recipe
+B STAFF MEALS - وجبات الموظفين ,2834260, Classic falafel s/w كلاسيك فلافل ساندويتش STAFF MEAL,0.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2861834,Classic falafel s/w كلاسيك فلافل ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902618,Classic falafel s/w كلاسيك فلافل ساندويتش STAFF MEAL,0.0,"","","",Recipe
+A STAFF MEALS - وجبات الموظفين,2930273,Classic falafel s/w كلاسيك فلافل ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Pans - قلايات ,2239400,Eggs with Cheese بيض مقلي بالجبنة,17.0,"","","",Recipe
+Tanoor Wraps,1881772,Falafel Mix Wrap,17.0,"","","",Recipe
+Salads,1000243,Fattoush,25.0,"","","",Recipe
+FF Salads,2185042,Fattoush,25.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788413,FF Chili Sauce 1 kg (CK) | صوص شطة ١ كجم (مطبخ),5.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2804095,FOC قطع3 خبز لبناني LEBANESE BREAD 3pcs,0.0,"","","",Recipe
+Sharing boxes - البوكسات ,1415657,Frayha's Box  بوكس فريحة ,39.0,"","","",Recipe
+FF Sides,2803200,Fresh Vegetables Cuts,7.0,"","","",Recipe
+Eggs & Pans,2268217,Fried Nabulsi Cheese,29.0,"","","",Recipe
+Wholesale - الجملة,2789090,Hummus حمص1 kg(دار التوفير Dar Al Tawfeer),11.0,"","","",Recipe
+RAMADAN COMBOS,3014858,IFTAR & SUHOOR Foul & Eggs Combo,45.0,"","","",Recipe
+RAMADAN COMBOS,3014855,IFTAR & SUHOOR Hummus with Meat & Shakshuka Combo,50.0,"","","",Recipe
+Manakish - مناقيش,2580073,Kashkaval قشقوان,12.0,"","","",Recipe
+Burger,2930253,Lebanese Beef Burger,29.0,"","","",Recipe
+Burgers - البرجر,2916056,Lebanese beef burger - برجر لحم لبناني,19.0,"","","",Recipe
+Sharing Boxes & Sliders,2184704,Mini Sliders BOX,45.0,"","","",Recipe
+Manakish,2595240,Muhammarah Kashkaval,22.0,"","","",Recipe
+FF Manakish,2803139,Muhammarah Kashkaval,22.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265309,Plain hummus M 350 gr   حمص ناعم سادة وسط  ,12.0,"","","",Recipe
+RAMADAN COMBOS - كومبو رمضان,3010197,Ramadan Foul & Eggs Combo فول و بيض كومبو,21.0,"","","",Recipe
+Salads - السلطات ,1415614,Tabbouleh تبولة ,18.0,"","","",Recipe
+Add ons - إضافات,1415437, Tahini S cup علبة طحينية صغيرة,1.0,"","","",Recipe
+Mini Pastries,2790682,Zaater 12 pcs,29.0,"","","",Recipe
+FF Mini Pastries,2803161,Zaater 12 pcs,29.0,"","","",Recipe
+Mini pastries - معجنات,2829039,Zaater 12 pcs معجنات زعتر,29.0,"","","",Recipe
+---------- ALL,2880287,زيت مستعمل used oil,1.0,"","","",""
+FF Beverages,2376874,Alokozay Cola Light,6.0,"","","",""
+Dishes - الأطباق ,1415501,Chicken Liver pl. صحن كبدة دجاج ,26.0,"","","",Recipe
+KA'AK Sesame Buns,1872193,Chicken Muskhan KA'AK,15.0,"","","",Recipe
+FF Sides,2803199,Chili Pickles,6.0,"","","",Recipe
+Falafels - الفلافل ,1415479,Classic Falafel s. pl. (Dine in)صحن فلافل كلاسيك صغير,6.0,"","","",Recipe
+Sides,2113803,Coleslaw,9.0,"","","",Recipe
+Sandwiches,1818489,Extra Falafel Sandwich,11.0,"","","",Recipe
+Pockets,1319304,Falafel Mix Pocket,11.0,"","","",Recipe
+Tanoor Wraps,1881770,Falafel Wrap,15.0,"","","",Recipe
+Salads - السلطات ,1415613,Fattoush فتوش ,18.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788412,FF Coleslaw 1 kg (CK) | سلطة كولسلو ١ كجم (مطبخ ),9.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2804094, FOC خبز بوكت POCKET BREAD 1pc,0.0,"","","",Recipe
+Cold Beverages,2253689,Fresh Orange Juice,15.0,"","","",Recipe
+Beverages - المشروبات  ,2201090,Fresh orange juice عصير برتقال طازج,12.0,"","","",Recipe
+Pans - قلايات ,2239398,Fried Cheese  جبنة مقلية,17.0,"","","",Recipe
+Eggs & Pans,2268222,Fried Tomato pan,29.0,"","","",Recipe
+Condiments,2113842,Garlic Paste,3.0,"","","",Recipe
+Dishes,1000214,Hummus,27.0,"","","",Recipe
+RAMADAN COMBOS,3014856,IFTAR & SUHOOR Foul & Fatteh Combo,50.0,"","","",Recipe
+Manakish,2611064,Muhammarah Manakish,17.0,"","","",Recipe
+FF Manakish,2803140,Muhammarah Manakish,17.0,"","","",Recipe
+Wholesale - الجملة,2788427,Muttabal متبل1 kg(دار التوفير Dar Al Tawfeer),20.0,"","","",Recipe
+FF Mini Pastries,2803162,Nabulsi Cheese 12 pcs,39.0,"","","",Recipe
+Mini Pastries,2790670,Nabulsi Cheese 12 pcs,39.0,"","","",Recipe
+Mini pastries - معجنات,2829040,Nabulsi Cheese 12 pcs معجنات جبنة نابلسية,39.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837870,Nabulsi cheese KAAK جبنة نابلسية كعك,13.0,"","","",Recipe
+Pockets - البوكيت,2837437,Nabulsi cheese Pocket جبنة نابلسية بوكيت,11.0,"","","",Recipe
+Sandwiches - السندويشات,2357645,Nabulsi cheese s/w جبنة نابلسية ساندويتش,9.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837129,Nabulsi cheese Wrap جبنة نابلسية راب,15.0,"","","",Recipe
+Sharing Boxes & Sliders,1658911,Pitas Combo box,59.0,"","","",Recipe
+Sharing boxes - البوكسات ,1702632,Pitas Combo box سندويش كومبو بوكس,42.0,"","","",Recipe
+A STAFF MEALS - وجبات الموظفين,2930274,Plain French Fries s/w بطاطا مقليةسادة ساندويتش STAFF MEAL,0.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2861835,Plain French Fries s/w بطاطا مقليةسادة ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902619,Plain French Fries s/w بطاطا مقليةسادة ساندويتش STAFF MEAL,0.0,"","","",Recipe
+B STAFF MEALS - وجبات الموظفين ,2835953,Plain French Fries s/w بطاطا مقليةسادة ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2460115, Plain hummus Large 500 gr حمص ناعم سادةكبير,18.0,"","","",Recipe
+RAMADAN COMBOS - كومبو رمضان,3010199,Ramadan Hummus with Meat & Shakshuka Combo حمص باللحم  و شكشوكة كومبو,25.0,"","","",Recipe
+Falafels,1000160,Spicy Stuffed Falafel 1 Piece,3.0,"","","",Recipe
+Manakish - مناقيش,2697867,Spinach سبانخ,12.0,"","","",Recipe
+Salads,1000242,Tabbouleh,25.0,"","","",Recipe
+FF Salads,2185050,Tabbouleh,25.0,"","","",Recipe
+Add ons - إضافات,1415439, Tatbelah S cupعلبة تتبيلة صغيرة,1.0,"","","",Recipe
+---------- ALL,2175990,فتح الدرج open drawer A,0.0,"","","",""
+FF Manakish,2803141,Akkawi Cheese,20.0,"","","",Recipe
+Manakish,2595230,Akkawi Cheese,20.0,"","","",Recipe
+Cold Beverages,2553143,Alokozay Cola Light,6.0,"","","",Finished Good
+KAAK Buns - كعك بالسمسم ,2837875,Cheddar cheese falafel KAAK فلافل بالشيدر كعك,13.0,"","","",Recipe
+Pockets - البوكيت,2837439,Cheddar cheese falafel Pocket فلافل بالشيدربوكيت,10.0,"","","",Recipe
+Sandwiches - السندويشات,2321069,Cheddar cheese falafel s/w فلافل بالشيدر ساندويتش,9.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837132,Cheddar cheese falafel Wrap فلافل بالشيدر راب,14.0,"","","",Recipe
+Falafels,2409697,Cheddar Cheese Stuffed Falafel 1 Piece,5.0,"","","",Recipe
+Dishes - الأطباق ,1415499, Chili Potatoes pl. صحن بطاطا حارة,16.0,"","","",Recipe
+Add ons - إضافات,1415438,Chili Sauce S cup علبة شطة صغيرة,1.0,"","","",Recipe
+Pans - قلايات ,2232150,Eggs & potato بطاطا و بيض,20.0,"","","",Recipe
+Manakish - مناقيش,2580070,Eggs with cheese  بيض بالجبنة,15.0,"","","",Recipe
+KA'AK Sesame Buns,1881753,Falafel KA'AK,12.0,"","","",Recipe
+Pockets,1319306,Falafel Pocket,10.0,"","","",Recipe
+Sandwiches,1818490,Falafel with Fried Vegetables Sandwich,11.0,"","","",Recipe
+Sharing Boxes & Sliders,1310132,FF Combo Box,55.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788411,FF Cornflower 1 KG | نشا بودرة 1كجم  ,3.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2804096,FOC خبز فرن OVEN BREAD 1pc,0.0,"","","",Recipe
+FF Beverages,2803106,Fresh Orange Juice,15.0,"","","",Recipe
+Sides,2113802,Fresh Vegetables Cuts,7.0,"","","",Recipe
+Eggs & Pans,2268223,Fried Tomato pan with Meat,36.0,"","","",Recipe
+Wholesale - الجملة,2788426,Hummus Mashed plain حمص1kg(Elaz food ايلاذ فوود),10.0,"","","",Recipe
+B STAFF MEALS - وجبات الموظفين ,2835955,Hummus s/w حمص ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902620,Hummus s/w حمص ساندويتش STAFF MEAL,0.0,"","","",Recipe
+A STAFF MEALS - وجبات الموظفين,2930275,Hummus s/w حمص ساندويتش STAFF MEAL,0.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2861836,Hummus s/w حمص ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Dishes,1000221,Hummus with Meat,36.0,"","","",Recipe
+Tanoor Wraps,1000197,Lebanese Fries wrap,18.0,"","","",Recipe
+FF Sides,2803207,Olives,3.0,"","","",Recipe
+Condiments,2113848,Olives,3.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265310,Plain Muttabbal M متبل سادة وسط,14.0,"","","",Recipe
+RAMADAN COMBOS - كومبو رمضان,3010198,Ramadan Foul & Fatteh Combo فول و فتة كومبو,25.0,"","","",Recipe
+Falafels - الفلافل ,1415483,Spicy Stuffed Falafel pl. صحن فلافل محشية بالشطة ,13.0,"","","",Recipe
+FF Mini Pastries,2803163,Spinach 12 pcs,39.0,"","","",Recipe
+Mini Pastries,2790683,Spinach12 pcs,39.0,"","","",Recipe
+Mini pastries - معجنات,2829041,Spinach 12 pcs معجنات سبانخ,39.0,"","","",Recipe
+Beverages - المشروبات  ,2175983,Tea شاي,1.0,"","","",""
+Sharing boxes - البوكسات ,1415658,Wraps Combo box راب كومبو بوكس ,49.0,"","","",Recipe
+---------- ALL,1415643,فتح الدرج open drawer B,0.0,"","","",""
+Manakish,2611078,Cheese Mix,22.0,"","","",Recipe
+FF Manakish,2803142,Cheese Mix,22.0,"","","",Recipe
+Dishes,1000240,Chicken Liver,34.0,"","","",Recipe
+FF Sides,2803201,Chili Sauce,2.0,"","","",Recipe
+Falafels,1000162,Cream Cheese Stuffed Falafel 1 Piece,5.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837880,Creamy cheese falafel KAAK فلافل بالجبنة كعك,13.0,"","","",Recipe
+Falafels - الفلافل ,1415484,Creamy Cheese Falafel pl. صحن فلافل بالجبنة  ,19.0,"","","",Recipe
+Pockets - البوكيت,2837440,Creamy cheese falafel Pocket فلافل بالجبنة بوكيت,10.0,"","","",Recipe
+Sandwiches - السندويشات,1772505,Creamy cheese falafel s/w فلافل بالجبنة ساندويتش,9.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837134,Creamy cheese falafel Wrap فلافل بالجبنة راب,14.0,"","","",Recipe
+Eggs & Pans,2268225,Eggs & Potato (Mfaraki),29.0,"","","",Recipe
+Pans - قلايات ,2232157,Eggs with meat   بيض باللحم,26.0,"","","",Recipe
+Manakish - مناقيش,2580069,Eggs بيض,12.0,"","","",Recipe
+KA'AK Sesame Buns,1881757,Falafel Mix KA'AK,13.0,"","","",Recipe
+Sharing boxes - البوكسات ,1506982,Falafel Sliders 12  فلافل سلايدرز,35.0,"","","",Recipe
+Sandwiches,1818491,Falafel with Hummus Sandwich,10.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2793445,FF Lemon salt 1 KG | ملح ليمون 1كجم  ,4.0,"","","",Recipe
+Pockets,1866767,Foul Pocket,10.0,"","","",Recipe
+Dishes - الأطباق ,1874522,French Fries pl. Medium صحن بطاطا مقلية وسط ,13.0,"","","",Recipe
+Dishes - الأطباق ,3198424,French Fries pl. SMALL صحن بطاطا مقلية صغير ,7.0,"","","",""
+Wholesale - الجملة,2788432,Garlic paste1 kgOrangeاورانج,15.0,"","","",Recipe
+Wholesale - الجملة,2928321,Garlic paste1 kgُ ثوم (دار التوفير Dar Al Tawfeer),15.0,"","","",""
+Add ons - إضافات,2206136,Ketchup S cup علبة كاتشب صغيرة,1.0,"","","",Recipe
+Cold Beverages,2185085,Laban Ayran,5.0,"","","",Finished Good
+FF Beverages,1000258,Laban Ayran,5.0,"","","",""
+Add ons - إضافات,2930265,Mayonnaise  S cup علبة مايونيز صغيرة,2.0,"","","",Recipe
+FF Mini Pastries,2803164,Mini Pizza 12 pcs,39.0,"","","",Recipe
+Mini Pastries,2790675,Mini Pizza 12 pcs,39.0,"","","",Recipe
+Sides,2113799,Mix Pickles,6.0,"","","",Recipe
+Tanoor Wraps,1000184,Musakhan Wrap,16.0,"","","",Recipe
+Beverages - المشروبات  ,1415647,Pepsi بيبسي ,4.0,"","","",Finished Good
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2902453,Plain Muttabbal Large متبل سادة كبير,20.0,"","","",Recipe
+B STAFF MEALS - وجبات الموظفين ,2835968,Stuffed Falafel s/w فلافل محشية ساندويتش STAFF MEAL,0.0,"","","",Recipe
+A STAFF MEALS - وجبات الموظفين,2930276,Stuffed Falafel s/w فلافل محشية ساندويتش STAFF MEAL,0.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2861837,Stuffed Falafel s/w فلافل محشية ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902621,Stuffed Falafel s/w فلافل محشية ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Condiments,2113839,Tahini Sauce,3.0,"","","",Recipe
+Sharing Boxes & Sliders,1310157,Wraps Combo Box,55.0,"","","",Recipe
+---------- ALL,2464479,فتح الدرج open drawer S,0.0,"","","",""
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,1415441, قطع3 خبز لبناني LEBANESE BREAD 3pcs,1.0,"","","",Recipe
+Falafels - الفلافل ,2184806,Cheddar Cheese Falafel pl. صحن فلافل بالشيدر ,19.0,"","","",Recipe
+Beverages - المشروبات  ,1415648,Diet Pepsi بيبسي دايت ,4.0,"","","",Finished Good
+Eggs & Pans,2268228,Eggs & Tomato (Shakshuka),27.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265314,Falafel Dough M  عجينة فلافل سادة وسط,14.0,"","","",Recipe
+B STAFF MEALS - وجبات الموظفين ,2835969,Falafel w/ foul s/w فلافل مع فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+A STAFF MEALS - وجبات الموظفين,2861838,Falafel w/ foul s/w فلافل مع فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902622,Falafel w/ foul s/w فلافل مع فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2930280,Falafel w/ foul s/w فلافل مع فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788410,FF Falafel Dough 5 kg (CK) | عجينة فلافل ٥ كجم (مطبخ ),20.0,"","","",Recipe
+Dishes,1000225,Foul (Beans) Lebanese,26.0,"","","",Recipe
+S STAFF MEALS - وجبات الموظفين,2861840,Foul s/w فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Dishes - الأطباق ,2832978,French Fries pl. Large صحن بطاطا مقلية كبير ,16.0,"","","",Recipe
+Pans - قلايات ,2232154,Fried Eggs  بيض مقلي,18.0,"","","",Recipe
+Sandwiches,1000198,Fried Veggies Sandwich,11.0,"","","",Recipe
+FF Sides,2803206,Garlic Paste,3.0,"","","",Recipe
+Wholesale - الجملة,2788421,Hummus 1 kg Orange أورانج,10.0,"","","",Recipe
+KA'AK Sesame Buns,1881761,Hummus with Meat KA'AK,17.0,"","","",Recipe
+Pockets,1866764,Hummus with Meat Pocket,15.0,"","","",Recipe
+FF Manakish,2803144,Kashkaval Cheese Melt,22.0,"","","",Recipe
+Manakish,2610933,Kashkaval Cheese Melt,22.0,"","","",Recipe
+Cold Beverages,2185086,Laban Ayran with Mint,5.0,"","","",""
+FF Beverages,1000260,Laban Ayran with Mint,5.0,"","","",""
+FF Mini Pastries,2803166,Lahm Bi Ajeen 12 pcs,42.0,"","","",Recipe
+Mini Pastries,2790684,Lahm Bi Ajeen12 pcs,42.0,"","","",Recipe
+Manakish - مناقيش,2580065,Lahm Bil Ajine لحم بالعجين,15.0,"","","",Recipe
+Pockets - البوكيت,2189706,Lebanese french fries Pocket بطاطا لبانيز بوكيت,10.0,"","","",Recipe
+Sandwiches - السندويشات,2141259,Lebanese french fries s/w بطاطا لبانيز ساندويتش,10.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415601,Lebanese french fries Wrap بطاطا لبانيز راب,14.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2141260,Lebanese Fries KAAK بطاطا لبانيز كعك ,13.0,"","","",Recipe
+Mini pastries - معجنات,2829052,Mini Pizza 12 pcs معجنات بيتزا,39.0,"","","",Recipe
+Sharing boxes - البوكسات ,2265359,MIX Sliders box 12 سلايدرز بوكس متنوع,45.0,"","","",Recipe
+Add ons - إضافات,2129118,Olives S cup علبة زيتون صغيرة,2.0,"","","",Recipe
+Condiments,2113846,Tatbelah,3.0,"","","",Recipe
+Sides,2113801,Turnip Pickles,8.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2307164, خبز بوكت POCKET BREAD 1pc,1.0,"","","",Recipe
+---------- ALL,1415644,فتح الدرج open drawer Z,0.0,"","","",""
+FF Beverages,1000254,7up,6.0,"","","",""
+Cold Beverages,2185080,7up,6.0,"","","",""
+Sandwiches,1000212,Chicken Liver Sandwich,13.0,"","","",Recipe
+Falafels - الفلافل ,1415412,Creamy Cheese Falafel 1 pc   فلافل محشي بالجبنة ,3.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2182356,Falafel dough Large عجينة فلافل سادةكبير,19.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788409,FF Fattoush –  Portion (CK) | فتوش –حصة فردية (مطبخ),8.0,"","","",""
+Dishes,1000227,Foul (Beans) Egyptian,26.0,"","","",Recipe
+Z STAFF MEALS - وجبات الموظفين,2902623,Foul s/w فول ساندويتش STAFF MEAL,0.0,"","","",""
+A STAFF MEALS - وجبات الموظفين,2930278,Foul s/w فول ساندويتش STAFF MEAL,0.0,"","","",""
+B STAFF MEALS - وجبات الموظفين ,2835957,Foul s/w فول ساندويتش STAFF MEAL,0.0,"","","",Recipe
+Eggs & Pans,2268231,Fried Eggs with Cheese,28.0,"","","",Recipe
+Dishes - الأطباق ,1415546,Fried Veggies pl. Medium صحن خضار مقلي وسط ,17.0,"","","",Recipe
+Dishes - الأطباق ,3198420,Fried Veggies pl. SMALL صحن خضار مقلي ص ,9.0,"","","",""
+KAAK Buns - كعك بالسمسم ,1871836,Hummus w/ Meat KAAK حمص باللحمة كعك,14.0,"","","",Recipe
+Pockets - البوكيت,1415632,Hummus W/ meat Pocket حمص باللحمة بوكيت ,13.0,"","","",Recipe
+Sandwiches - السندويشات,1415608,Hummus w/ meat  s/w حمص باللحم ساندويتش,13.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415618, Hummus w/ meat Wrap حمص باللحم راب,20.0,"","","",Recipe
+Mini pastries - معجنات,2829046,Lahm Bi Ajeen 12 pcs معجنات لحم بالعجين,42.0,"","","",Recipe
+FF Mini Pastries,2803171,Mini Pastries Mix 12 pcs,44.0,"","","",Recipe
+Mini Pastries,2790681,Mini Pastries Mix 12 pcs,44.0,"","","",Recipe
+Mini pastries - معجنات,2829045,Mini Pastries Mix 12 pcs معجنات ميكس,44.0,"","","",Recipe
+Beverages - المشروبات  ,1415652,Mountain Dew ديو,4.0,"","","",Finished Good
+Pockets,1319303,Musakhan Pocket,15.0,"","","",Recipe
+Sharing boxes - البوكسات ,1723204,Musakhan Sliders 12 مسخن سلايدرز,49.0,"","","",Recipe
+Add ons - إضافات,1415443,Pickles S cup علبة مخلل صغيرة,1.0,"","","",Recipe
+Pans - قلايات ,2232142,Shakshoka شكشوكة,20.0,"","","",Recipe
+Manakish,2697860,Spinach,19.0,"","","",Recipe
+FF Manakish,2803143,Spinach,19.0,"","","",Recipe
+Manakish - مناقيش,2613011,Turkey & Cheese حبش و جبنة,15.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2804102, خبز فرن OVEN BREAD 1pc,1.0,"","","",Recipe
+Cold Beverages,2185081,7up Diet,6.0,"","","",""
+FF Beverages,1081244,7up Diet,6.0,"","","",Finished Good
+Beverages - المشروبات  ,1415649, 7up سفن اب,4.0,"","","",Finished Good
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265316,Boiled chickpeas M حمص حب سادة وسط,13.0,"","","",Recipe
+Falafels - الفلافل ,2321067,Cheddar Cheese Falafel 1 pc  فلافل محشي بالشيدر ,3.0,"","","",Recipe
+Sandwiches,2409782,Chicken Musakhan Sandwich,13.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837883,Extra Falafel KAAK إكسترا فلافل كعك,10.0,"","","",Recipe
+Pockets - البوكيت,2837443,Extra Falafel Pocket إكسترا فلافل بوكيت,7.0,"","","",Recipe
+Sandwiches - السندويشات,1415582,Extra Falafel s/w إكسترا فلافل ساندويتش,7.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837145,Extra Falafel Wrap إكسترا فلافل راب,11.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788408,FF Garlic Paste 1 kg (CK) | كريم ثوم ١ كجم (مطبخ ),9.0,"","","",Recipe
+Eggs & Pans,2268232,Fried Eggs with Meat,31.0,"","","",Recipe
+Dishes - الأطباق ,1415492, Fried Veggies pl. صحن خضار مقلي ,17.0,"","","",Recipe
+Sharing boxes - البوكسات ,1723207,Fried Veggies Sliders 12 مقالي سلايدرز,31.0,"","","",Recipe
+Add ons - إضافات,1415440, Garlic S cup علبة ثوم صغيرة,1.0,"","","",Recipe
+Manakish - مناقيش,2580066,Meat with Cheese لحمة  مع جبنة,16.0,"","","",Recipe
+Dishes,1000230,Mutabbal,27.0,"","","",Recipe
+Pans - قلايات ,2232143,Tomato pan with meat  قلاية بندورة باللحمة,26.0,"","","",Recipe
+FF Manakish,2803152,Zaatar,13.0,"","","",Recipe
+Manakish,2595228,Zaatar,13.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,2412953,خبز كعك  KAAK BREAD 1pc,2.0,"","","",Recipe
+Beverages - المشروبات  ,1415650,7up diet  سفن اب دايت,4.0,"","","",Finished Good
+Add ons - إضافات,2279037,ِAdd Nuts إضافة مكسرات,3.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2604744,Boiled chickpeas Large حمص حب سادة  كبير ,17.0,"","","",Recipe
+Cold Beverages,2185083,Diet Pepsi,6.0,"","","",""
+FF Beverages,1000248,Diet Pepsi,6.0,"","","",Finished Good
+CK Items - طلبيات الأفرع,2788407,FF Round sticker ستيكر دائري roll 1 رول,60.0,"","","",""
+Eggs & Pans,2268233,Fried Eggs,22.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837888,Hummus KAAK حمص كعك,8.0,"","","",Recipe
+Pockets - البوكيت,2837473,Hummus Pocket حمص بوكيت,6.0,"","","",Recipe
+Sandwiches - السندويشات,2297152,Hummus s/w حمص ساندويتش,6.0,"","","",Recipe
+Sandwiches,1000200,Hummus with Meat Sandwich,13.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182458,Hummus w/ meat Sliders 12 حمص باللحم سلايدرز ,36.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837139,Hummus Wrap حمص راب,9.0,"","","",Recipe
+Manakish - مناقيش,2580064,Muhammara & Kashkaval محمرة قشقوان,13.0,"","","",Recipe
+Dishes,1000223,Mussabbaha,26.0,"","","",Recipe
+Dishes - الأطباق ,1415526,Mutabbal pl. صحن متبل ,18.0,"","","",Recipe
+Falafels - الفلافل ,1415411,Spicy Stuffed Falafel 1 pc فلافل محشية بالشطة ,2.0,"","","",Recipe
+Pans - قلايات ,2232146,Tomato pan  قلاية بندورة,18.0,"","","",Recipe
+Manakish,2610930,Zaatar & Cheese,18.0,"","","",Recipe
+FF Manakish,2803153,Zaatar & Cheese  ,18.0,"","","",Recipe
+Bread Add Ons - إضافات الخبز المجانية و المدفوعة,1415442,خبز تنور TANOOR BREAD 1pc,2.0,"","","",Recipe
+Add ons - إضافات,2061340,Add Sauce إضافة دبس رمان,1.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265318,Boiled Fava Beans  فول حب سادة وسط,13.0,"","","",Recipe
+Sandwiches,1000204,Chili Potatoes Sandwich,9.0,"","","",Recipe
+Falafels - الفلافل ,1415434,Classic Falafel 2 pcs 1 AED فلافل حب كلاسيك  ,1.0,"","","",Recipe
+Sandwiches - السندويشات,1415574,Classic falafel s/w كلاسيك فلافل ساندويتش,6.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415575,Classic falafel Wrap كلاسيك فلافل راب,10.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,1871838,Falafel KAAK فلافل كعك,8.0,"","","",Recipe
+Pockets - البوكيت,1415621,Falafel Pocket فلافل بوكيت ,6.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2790687,FF Orange juice – 1 Bottle (CK) | عصير برتقال –حصة فردية (مطبخ),4.0,"","","",""
+Sharing boxes - البوكسات ,2265343,Fried Cheese Sliders 12 جبنة مقلية سلايدرز ,36.0,"","","",Recipe
+Dishes,1000219,Hummus Beiruty,28.0,"","","",Recipe
+Beverages - المشروبات  ,1415655,Laban Ayran لبن عيران ,3.0,"","","",Finished Good
+FF Manakish,2803155,Lahm bi ajeen,21.0,"","","",Recipe
+Manakish,2595226,Lahm bi ajeen,21.0,"","","",Recipe
+Cold Beverages,2185090,Mirinda,6.0,"","","",""
+FF Beverages,1000253,Mirinda,6.0,"","","",Finished Good
+Manakish - مناقيش,2580068,Muhammara  محمرة ,9.0,"","","",Recipe
+Dishes - الأطباق ,2321071,Mutabbal pl. Large صحن متبل كبير ,21.0,"","","",Recipe
+Add ons - إضافات,1415445,Add Fries اضافة بطاطا ,1.0,"","","",Recipe
+Dishes - الأطباق ,2604706,Balila pl. Large صحن بليلة كبير ,18.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2604739,Boiled Foul Large  فول حب سادة كبير ,17.0,"","","",Recipe
+Dishes,1000239,Chili Potatoes,28.0,"","","",Recipe
+Falafels - الفلافل ,2176016,Classic Falafel 6 pcs فلافل كلاسيكية 6 قطع,5.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,1871840,Falafel Mix KAAK فلافل مشكل كعك,9.0,"","","",Recipe
+Pockets - البوكيت,1415622,Falafel Mix Pocketفلافل مشكل بوكيت,7.0,"","","",Recipe
+Sandwiches - السندويشات,1415576,Falafel Mix s/w فلافل مع مقالي ساندويتش,7.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415577, Falafel Mix Wrap فلافل مع مقالي راب,12.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788406,FF Tahina crownies bucket net KG 6.5 طحينة خام درام صافي كجم,80.0,"","","",Recipe
+Beverages - المشروبات  ,1415656,Laban Ayran w/ Mint لبن عيران بالنعناع ,3.0,"","","",Finished Good
+FF Manakish,2803156,Lahm bi ajeen with cheese,25.0,"","","",Recipe
+Manakish,2610928,Lahm bi ajeen with cheese,25.0,"","","",Recipe
+Sandwiches,2409780,Lebanese Fries Sandwich,13.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182459,Liver Sliders 12 كبدة سلايدرز,36.0,"","","",Recipe
+FF Beverages,1000252,Mountain Dew,6.0,"","","",Finished Good
+Cold Beverages,2185092,Mountain Dew,6.0,"","","",""
+Manakish - مناقيش,2580063,Triple Cheese مكس جبنة,14.0,"","","",Recipe
+Manakish,2611250,5 Manakish Bundle,69.0,"","","",Recipe
+FF Manakish,2803158,5 Manakish Bundle,69.0,"","","",Recipe
+Add ons - إضافات,1415447,Add Hummus اضافة حمص ,1.0,"","","",Recipe
+Dishes - الأطباق ,2184772,Balila pl. صحن بليلة ,13.0,"","","",Recipe
+Falafels - الفلافل ,2176017,Classic Falafel 12 pcs فلافل كلاسيكية 12 قطع,9.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788404,FF Sesame 1 KG | سمسم نيء 1كجم  ,12.0,"","","",Recipe
+Sandwiches,1000209,Foul Sandwich,10.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182456,Foul Sliders 12 فول سلايدرز,23.0,"","","",Recipe
+Dishes,1000236,Fried Vegetables,30.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2902465,Garlic paste  S كريم ثوم صغير,7.0,"","","",Recipe
+Manakish - مناقيش,2580058,Labneh لبنة,10.0,"","","",Recipe
+Beverages - المشروبات  ,1415646,Mineral Water مياه معدنية ,2.0,"","","",Finished Good
+FF Beverages,1000247,Pepsi,6.0,"","","",Finished Good
+Cold Beverages,2185100,Pepsi,6.0,"","","",""
+KAAK Buns - كعك بالسمسم ,2837890,Stuffed Falafel KAAK فلافل محشية كعك,10.0,"","","",Recipe
+Pockets - البوكيت,2182355,Stuffed Falafel Pocket فلافل محشي بوكيت ,7.0,"","","",Recipe
+Sandwiches - السندويشات,1415580,Stuffed Falafel s/w فلافل محشية ساندويتش,8.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837137,Stuffed Falafel Wrap فلافل محشية راب,12.0,"","","",Recipe
+FF Manakish,2803159,3 Manakish Bundle,49.0,"","","",Recipe
+Manakish,2611209,3 Manakish Bundle,49.0,"","","",Recipe
+Add ons - إضافات,2129120,Add pomegranate  إضافة رمان حب  ,1.0,"","","",Recipe
+Sharing boxes - البوكسات ,2265357,Cauliflower Sliders 12 قرنبيط سلايدرز,28.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2837892,Falafel w/ foul KAAK فلافل مع فول كعك,11.0,"","","",Recipe
+Pockets - البوكيت,2837445,Falafel w/ foul Pocket فلافل مع فول بوكيت,8.0,"","","",Recipe
+Sandwiches - السندويشات,1415585,Falafel w/ hummus s/w فلافل مع حمص ساندويتش,6.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415586,Falafel w/ hummus Wrap فلافل مع حمص راب,12.0,"","","",Recipe
+Dishes - الأطباق ,1415521,Fatteh pl. صحن فتة حمص,25.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788403,FF Spicy Falafel Stuffing 1 kg (CK) | حشوة فلافل حارة ١ كجم (مطبخ),4.0,"","","",Recipe
+Dishes,1000238,French Fries,18.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265311,Garlic paste  M   كريم ثوم وسط,14.0,"","","",Recipe
+Beverages - المشروبات  ,1415651,Mirinda ميراندا ,4.0,"","","",Finished Good
+FF Beverages,1000257,Small Mineral Water,3.0,"","","",""
+Cold Beverages,2185103,Small Mineral Water,3.0,"","","",""
+Falafels - الفلافل ,2176025,Spicy Stuffed Falafel 3 pcs  فلافل محشية بالشطة3  قطع,8.0,"","","",Recipe
+Manakish - مناقيش,2580056,Zaatar & Labneh زعتر و لبنة,11.0,"","","",Recipe
+Add ons - إضافات,1415446,Add Foul اضافة فول ,1.0,"","","",Recipe
+Sharing boxes - البوكسات ,2265344,Chili potatoes Sliders 12 بطاطا حارة سلايدرز,28.0,"","","",Recipe
+Sandwiches - السندويشات,1415587,Falafel w/ foul s/w فلافل مع فول ساندويتش,8.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2837143,Falafel w/ foul Wrap فلافل مع فول راب ,13.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788402,FF Summac 1 KG | سماق 1كجم  ,12.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2321073,Foul KAAK فول كعك,9.0,"","","",Recipe
+Pockets - البوكيت,1415626,Foul Pocket فول بوكيت ,6.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2902446,Garlic paste Large  كريم ثوم كبير,20.0,"","","",""
+Dishes - الأطباق ,1415542,Musabbaha pl. صحن مسبحة ,18.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2895220,Sodium carbonate 1 KG | كربونات الصوديوم1كجم  ,6.0,"","","",Recipe
+Falafels - الفلافل ,2176020,Spicy Stuffed Falafel 6 pcs فلافل محشية بالشطة 6 قطع,15.0,"","","",Recipe
+Manakish - مناقيش,2580055,Zaatar & Cheese زعتر و جبنة,12.0,"","","",Recipe
+---------- ALL,1415448,دليفري Delivery ,1.0,"","","",""
+Manakish - مناقيش,2580054,Akkawi Cheese جبنة عكاوي,13.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,1871839,Chicken Liver KAAK كبدة  دجاج كعك,12.0,"","","",Recipe
+Pockets - البوكيت,1415624,Chicken Liver Pocketكبدةدجاج بوكيت ,13.0,"","","",Recipe
+Falafels - الفلافل ,2176030,Creamy Cheese Falafel 3 pcs فلافل بالجبنة 3 قطع  ,11.0,"","","",Recipe
+Sharing boxes - البوكسات ,1772504,Falafel Sliders box small 6 فلافل سلايدرز صغير,15.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788400,FF Tanoor bread 1 pc| 1قطعة خبز تنور,0.5,"","","",Recipe
+Sandwiches - السندويشات,1415592,Foul s/w فول ساندويتش,6.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415593,Foul Wrap فول راب,12.0,"","","",Recipe
+Dishes - الأطباق ,1415572,Musabbaha pl. Large صحن مسبحة كبير ,21.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2902466,Tahini sauce S صوص طحينة صغير,6.0,"","","",Recipe
+Add ons - إضافات,1415612,"إضافة لحم للأطباق و سندويشات التنور و الكعك  Add Meat to dishes, Tanoor , KAAK",10.0,"","","",Recipe
+Sandwiches - السندويشات,1415604,Chicken Liver s/w كبدة دجاج ساندويتش,13.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415607, Chicken Liver wrap كبدة دجاج راب,19.0,"","","",Recipe
+Falafels - الفلافل ,2176028,Creamy Cheese Falafel 6 pcs  فلافل بالجبنة 6 قطع,21.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788399,FF Tabbouleh –  Portion (CK) | تبولة –حصة فردية (مطبخ),9.0,"","","",""
+Dishes - الأطباق ,1415534,Hummus pl.  صحن حمص ,18.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,1871833, Musakhan KAAK مسخن كعك,12.0,"","","",Recipe
+Pockets - البوكيت,1415628,Musakhan Pocket مسخن بوكيت ,13.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182373, Slider box Half Falafel Half foulسلايدر نص فلافل نص فول,35.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2265315,Tahini sauce M صوص طحينةوسط,12.0,"","","",Recipe
+Manakish - مناقيش,2580053,Zaatar زعتر,9.0,"","","",Recipe
+Add ons - إضافات,2206010, إضافة لحم مفروم للسندويشات الصغيرةAdd Meat to small sandwiches,5.0,"","","",Recipe
+Add ons - إضافات,1841570,ِAdd muttabal إضافة متبل ,1.0,"","","",Recipe
+Falafels - الفلافل ,2395380,Cheddar Cheese Falafel 3 pcs فلافل بالشيدر 3 قطع,11.0,"","","",Recipe
+Sandwiches - السندويشات,1415599,Chicken Musakhan s/w دجاج مسخن ساندويتش,13.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415600,Chicken Musakhan Wrap دجاج مسخن راب,20.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788397,FF Tatbelah Sauce 1 kg (CK) | صوص تتبيلة ١ كجم (مطبخ),6.0,"","","",Recipe
+Dishes - الأطباق ,1415569,Hummus pl. Large صحن حمص كبير ,19.0,"","","",Recipe
+KAAK Buns - كعك بالسمسم ,2830493,Plain French Fries KAAK بطاطا مقلية سادة كعك,9.0,"","","",Recipe
+Pockets - البوكيت,2830516,Plain French Fries pocket بطاطا مقليةسادة بوكت,7.0,"","","",Recipe
+Sharing boxes - البوكسات ,2630640,Slider box Half Falafel Half fried veggies سلايدر نص فلافل نص مقالي,38.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2902456,Tahini sauce Large  صوص طحينةكبير,18.0,"","","",""
+Falafels - الفلافل ,2395382,Cheddar Cheese Falafel 6 pcs فلافل بالشيدر 6 قطع,21.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2206109,Coleslaw S  سلطة مايونيز صغير,8.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788393,FF Hummus 2 kg (CK) | حمص ٢ كجم (مطبخ مركزي),10.0,"","","",""
+KAAK Buns - كعك بالسمسم ,2182357,Fried Veggies  KAAK مقالي كعك,9.0,"","","",Recipe
+Pockets - البوكيت,1415634,Fried Veggies Pocketمقالي بوكيت,7.0,"","","",Recipe
+Dishes - الأطباق ,2265297,Hummus  w/ Liver pl. صحن حمص بالكبدة ,26.0,"","","",Recipe
+Dishes - الأطباق ,3199654,Hummus  w/ Musakhan pl. صحن حمص بالمسخن ,29.0,"","","",""
+Sandwiches - السندويشات,2321079,Plain French Fries s/w بطاطا مقليةسادة ساندويتش,7.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,2830467,Plain French Fries Wrap بطاطا مقلية سادة راب,11.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182375, Slider box Half Falafel Half Liver سلايدر نص فلافل نص كبدة,29.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2206111,Coleslaw M  سلطة مايونيز وسط,16.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788392,FF Tahina Sauce 10 kg (CK) | صوص طحينة ١٠ كجم (مطبخ ),50.0,"","","",Recipe
+Pockets - البوكيت,2604681,Fried eggs Pocket بيض مقلي بوكيت,9.0,"","","",Recipe
+Sandwiches - السندويشات,1415597,Fried Veggies s/w مقالي مشكّل ساندويتش,7.0,"","","",Recipe
+Tanoor Wraps - راب التنور  ,1415598, Fried Veggies Wrap مقالي مشكّل راب,12.0,"","","",Recipe
+Dishes - الأطباق ,2604709,Hummus w/ Liver pl. Large صحن حمص بالكبدة كبير ,29.0,"","","",Recipe
+Sharing boxes - البوكسات ,2182374,Slider box Half Falafel Half meat سلايدر نص فلافل نص حمص باللحم,29.0,"","","",Recipe
+Pockets - البوكيت,2604684,Eggs & Tomato Pocket بيض و بندورة بوكيت,11.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788391,FF Musakhan 1 kg (CK) |  مسخن ١ كجم (مطبخ ),19.05,"","","",Recipe
+Dishes - الأطباق ,1415540,Hummus w/ Meat pl. صحن حمص باللحم ,27.0,"","","",Recipe
+Sharing boxes - البوكسات ,1959260,Slider box Half Falafel Half سلايدر نص فلافل نص مسخن,29.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2206022,Vegetables Slices S  شرائح الخضار صغير,5.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788390,FF Muttabal 1 kg (CK) | متبل ١ كجم (مطبخ),13.0,"","","",Recipe
+Dishes - الأطباق ,2604707,Hummus w/ Meat pl. Large صحن حمص باللحم كبير ,35.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2129124,Vegetable slices M شرائح الخضار وسط,10.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788389,FF Rectangular yellow sticker   ستيكر أصفر مستطيل roll 1 رول,110.0,"","","",""
+Dishes - الأطباق ,1415537,Hummus with Nuts pl. صحن حمص بالمكسرات ,16.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2206068,Pickles Sمخلل صغير,5.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788388,FF Sandwich sticker  ستيكر سندويش roll 1 رول,62.0,"","","",""
+Dishes - الأطباق ,2604728, Hummus with Nuts pl. Large صحن حمص بالمكسرات كبير,23.0,"","","",Recipe
+Plain Items & Sides-  علب سادة و أطباق جانبية ,2129125,Pickles M  مخلل وسط,10.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788384,FF Salt 1 KG | ملح ناعم 1كجم  ,0.75,"","","",Recipe
+Dishes - الأطباق ,1415538,Hummus Beiruty  pl. صحن حمص بيروتي ,20.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2831445,FF Chickpeas 14 mm KG 25  حمص حب شوال كجم,155.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2795906,FF Fava Beans KG 20 فول حب شوال كجم,105.0,"","","",Recipe
+Dishes - الأطباق ,2604721,Hummus Beiruty pl. Large صحن حمص بيروتي كبير ,23.0,"","","",Recipe
+CK Items - طلبيات الأفرع,2788382,FF olive oil 1 crtn liters 10  زيت زيتون 1 كرتون لتر,140.0,"","","",Recipe
+Dishes - الأطباق ,1415519,Hummus w/ Foul pl. صحن حمص مع فول(قدسية) ,19.0,"","","",Recipe
+Dishes - الأطباق ,2604710,Hummus w/ Foul pl. Large صحن حمص مع فول(قدسية) كبير ,23.0,"","","",Recipe
+Dishes - الأطباق ,1415513,Foul Egyptian pl. صحن فول مصري ,18.0,"","","",Recipe
+Dishes - الأطباق ,1415570,Foul Egyptian pl. Large صحن فول مصري كبير ,19.0,"","","",Recipe
+Dishes - الأطباق ,1415516,Foul Lebanese pl. صحن فول لبناني ,18.0,"","","",Recipe
+Dishes - الأطباق ,2604768,Foul Lebanese pl. Large صحن فول لبناني كبير ,19.0,"","","",Recipe
+Dishes - الأطباق ,2265302,Foul with oil pl. صحن فول بالزيت ,18.0,"","","",Recipe
+Dishes - الأطباق ,2604741,Foul with oil pl. Large صحن فول بالزيت كبير ,19.0,"","","",Recipe
+Dishes - الأطباق ,2265305,Foul Yoghurt pl. فول باللبن صحن ,18.0,"","","",Recipe
+Dishes - الأطباق ,2604742, Foul Yoghurt pl. Large صحن فول باللبن كبير  ,19.0,"","","",Recipe

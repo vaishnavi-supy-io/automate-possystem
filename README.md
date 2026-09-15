@@ -8,6 +8,9 @@ Two independent pipelines are included:
 |---|---|---|---|
 | Oracle BI | `reports.indpt.com` | Independent (indpt) | `automation.py` |
 | Sapapad | `pos.sapaad.com` | Bake My Day | `sapapad_automation.py` |
+| Sapaad | `pos.sapaad.com` | Falafel Frayha | `sapapad_automation.py --config sapaad_falafel_config.yaml` |
+| Sapaad | `pos.sapaad.com` | Heal Restaurant | `sapapad_automation.py --config sapaad_heal_config.yaml` |
+| Sapaad | `pos.sapaad.com` | Pinza | `sapapad_automation.py --config sapaad_pinza_config.yaml` |
 
 ---
 
@@ -146,6 +149,81 @@ Branches with zero rows (no sales yesterday) are skipped — no email sent, no e
 [Stage 4] ✓ Email sent → recipient@supy.io
 ```
 
+### Sapaad — the other three tenants
+
+Falafel Frayha, Heal and Pinza are the same portal, so they run the same script
+with a different config. Each config sets `tenant.slug`, which keeps that
+account's cached session in its own `state/<slug>/` — sharing a `storage_state`
+between two Sapaad accounts logs the first one out when the second runs.
+
+```bash
+python sapapad_automation.py --config sapaad_falafel_config.yaml --per-branch
+python sapapad_automation.py --config sapaad_heal_config.yaml    --per-branch
+python sapapad_automation.py --config sapaad_pinza_config.yaml   --per-branch
+```
+
+Branches are not listed in any config — `discover_locations()` reads them off
+the portal's location dropdown at run time.
+
+#### Before the first run
+
+Each tenant needs two things that cannot be derived from the portal alone:
+
+1. **Credentials**, set via the prompt so they never land in shell history:
+
+   ```bash
+   python set_credential.py SAPAAD_FALAFEL_FRAYHA_USERNAME
+   python set_credential.py SAPAAD_FALAFEL_FRAYHA_PASSWORD
+   ```
+
+   Repeat for `SAPAAD_HEAL_RESTAURANT_*` and `SAPAAD_PINZA_SAPAAD_*`.
+
+2. **The item master**, which is what resolves `POS Item ID`. In Sapaad:
+   ☰ → Setup → Menu Setup → Upload Menus → *Download all items as CSV file*,
+   then save it over the matching file in `mappings/`:
+
+   | Tenant | Mapping file | Sapaad download |
+   |---|---|---|
+   | Falafel Frayha | `mappings/sapaad_falafel_item_codes.csv` | `falafel_all items.csv` |
+   | Heal Restaurant | `mappings/sapaad_heal_item_codes.csv` | `HEAL_items.csv` |
+   | Pinza | `mappings/sapaad_pinza_item_codes.csv` | `Pinza Restaurant LLC _items.csv` |
+
+   The file must keep the `item_name`, `category_name` and `item_id` headers.
+   Until it is supplied, every `POS Item ID` comes out blank and verification
+   fails the run with a 0% match rate — deliberately, rather than emailing an
+   unusable sheet.
+
+### Paid modifiers (Marketing → Top Paid Modifiers)
+
+The three Sapaad tenants fetch a **second** report in the same run and append
+it beneath the grossing items in the same sheet, so Supy still ingests one file
+per branch per day:
+
+```
+Sales Date | POS Item ID | POS Item Name | Sold QTY | ... ← grossing items
+...
+Sales Date | Extra Cheese | Extra Cheese | 8        | ... ← modifiers continue here
+```
+
+Two things differ from the grossing half:
+
+- **No item-master lookup.** Modifiers are not in the item master, so the
+  modifier *name* doubles as its POS code — it fills both `POS Item ID *` and
+  `POS Item Name`.
+- **Excl. tax is derived**, as `incl / 1.05` (UAE VAT 5%), because Sapaad
+  reports paid modifiers at gross only. If the export ever gains an excl-tax
+  column, name it under `modifiers.source_columns.excl` and it is used verbatim
+  instead — a value the source states is never re-derived from its own gross.
+
+Pass `--no-modifiers` to fetch grossing items only. BMD has no `modifiers`
+block in its config, so it is unaffected.
+
+A missing or failed modifiers export **degrades** the run rather than failing
+it: the grossing report is still transformed and emailed, with the reason
+logged and printed. Verification counts both raw CSVs, and the item-ID match
+rate is measured on the grossing rows alone — counting modifiers, which always
+carry an ID, would dilute a completely broken item mapping into looking fine.
+
 ### Sapapad — all branches combined (single report)
 
 ```bash
@@ -154,6 +232,7 @@ python sapapad_automation.py --debug  # headed browser
 python sapapad_automation.py --no-email
 python sapapad_automation.py --from-stage 3
 python sapapad_automation.py --force-login
+python sapapad_automation.py --no-modifiers   # grossing items only
 ```
 
 ---
@@ -821,6 +900,72 @@ incomplete. It now fires only when a next-page control genuinely exists and
 the cap stopped us from following it, i.e. only when data really was missed.
 Covered by `test_no_cap_warning_when_the_portal_has_no_pager` and
 `test_cap_warning_when_a_further_page_really_exists`.
+
+### Backfills reached only page one, silently (fixed 2026-09-11)
+
+Asked for 1 Jul–31 Aug, both `anddine` and `justeat_business` returned the
+**most recent page** and exited `OK`. `_collect_order_links` treated an empty
+`selectors.next_page` as "this list has no more pages" — true for Feedr above,
+false for these two, which page but expose no *clickable* Next. So &Dine read
+its 20 newest orders and JustEat Business its 10, whatever date range was
+requested, and no alarm fired because the cap warning only covers a pager that
+exists.
+
+The damage is visible in `output/`: the file named `..._2026-07-01_20260807.xlsx`
+starts on **9 Jul**, and `..._2026-08-31_20260904.xlsx` contains **3 Sep** rows.
+
+Three config keys now drive the walk:
+
+| Key | Meaning |
+|---|---|
+| `pagination.url_param` | Page by URL (`?page=N`) when there is no control to click |
+| `pagination.stop_when_older` | Stop once a page is wholly older than `--from`. Default **true** — safe only on a newest-first list |
+| `pagination.delay_seconds` | Pause between list pages |
+| `browser.request_delay_seconds` | Pause between order-detail loads |
+
+**JustEat Business** pages by URL only; `orders_url` pins `page=1`, so
+`url_param: page` rewrites it while keeping `tab=Past`. 10 pages, 63 orders for
+Jul–Aug.
+
+**&Dine** is the opposite: `?page=2` is **ignored** — it re-serves page 1
+verbatim (measured) — and the pager is numbered `1 2 3 … 7`, not a Next button.
+A bare `.table__pagination--button` would re-click "1" forever, so the selector
+is the adjacent sibling of the selected button:
+
+```yaml
+next_page: ".table__pagination--button.button-selected + .table__pagination--button"
+```
+
+Two things that bite on this portal, both now handled in the engine:
+
+* **The button past the last page is hidden, not removed.** `is_enabled()`
+  alone returns true for it, so the run blocked for the full 30s click timeout.
+  Visibility is checked too.
+* **The table re-renders after `networkidle`.** Page 5 served page 4's rows for
+  over a second; the repeat-guard read that as the end of the list and stopped
+  three pages early. The engine now waits for the rows themselves to change.
+
+`stop_when_older` **must stay false for &Dine.** `order_date` is the *delivery*
+date while rows are ordered by when the order was placed, so dates jump around:
+page 1 ran 18/09/26 down to 28/07/26 and ended 28/07 *then* 30/07, and page 4
+(Jan–May 2026) sat between pages of 2026 and 2024 orders.
+
+### One order, booked twice — what pagination exposed (2026-09-11)
+
+The first paged &Dine backfill returned 373 line items where the truth was 364.
+`SAT-32L8L` (order 15131) sat at the end of page 1 *and* the start of page 2 —
+the list shifts between page loads — and the engine collected it twice, writing
+its 9 line items twice and booking **£1,230.58 against a £732.35 order**.
+
+There was no dedup because, before paging, an order could only be seen once.
+`_collect_order_links` now keys on the href (or the reference in click-mode —
+`row_index` repeats on every page and cannot stand in for it) and reports what
+it ignored. Locked by `test_an_order_on_two_pages_is_collected_once`.
+
+**Every &Dine order in the backfill reconciles to its portal order total**
+within the mixed-VAT drift documented in `partners/anddine.yaml` (0–3% high,
+because a flat ×1.2 over-taxes zero-rated cold food), and the four Set orders
+land exactly on their totals.
 
 ### HomeCook — implemented 2026-09-02
 

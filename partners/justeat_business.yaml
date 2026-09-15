@@ -69,6 +69,9 @@ browser:
   # cdp_endpoint: "http://localhost:9222"   # re-enable only if a real challenge appears
   persistent_profile: true
   challenge_wait_seconds: 30
+  # Pause between order-detail loads (see the 403 note above). A backfill opens
+  # hundreds of orders where a daily run opens five.
+  request_delay_seconds: 4
 
 selectors:
   # ✅ CONFIRMED 2026-08-06 — Cloudflare cleared using a headed run with a
@@ -106,10 +109,10 @@ selectors:
   status: "[col-id='status']"
   order_total: "[col-id='totalAmountBeforePromoCode']"
   order_reference: "[col-id='humanId']"
-  # ⚠️  Pagination is by URL (&page=N) and orders_url pins page=1, so only the
-  #     most recent 10 orders are read. Fine for a daily run; a backfill older
-  #     than ~10 orders needs page walking. next_page is left empty because
-  #     there is no in-page control to click.
+  # ✅ RESOLVED 2026-09-11 — see pagination.url_param below. next_page stays
+  #     empty because there IS no in-page control to click; the engine now
+  #     walks &page=N in the URL instead, so a backfill is no longer capped at
+  #     the most recent 10 orders.
   next_page: ""
 
   order_id: "[col-id='humanId']"   # "1058167"
@@ -130,7 +133,20 @@ filters:
     - "Delivered"
 
 pagination:
-  max_pages: 20
+  # 10 orders per page. 40 pages covers ~400 orders — enough for a two-month
+  # backfill with room to spare; the engine warns if the cap is ever reached
+  # with pages still to come.
+  max_pages: 40
+  # This portal has no pager control: "Past" and the page number are query
+  # params, so the walk is by URL. Without this the engine reads page one and
+  # stops silently — which is why every backfill before 2026-09-11 returned
+  # only the most recent orders whatever date range it was given.
+  url_param: "page"
+  # Stop as soon as a page is entirely older than --from. The list is
+  # newest-first, so there is nothing useful further back.
+  stop_when_older: true
+  # Throttle. This host 403'd on 2026-09-08 after repeated rapid hits.
+  delay_seconds: 5
 
 dates:
   # Absolute list dates read "01/09/2026". Relative ones ("Yesterday") are

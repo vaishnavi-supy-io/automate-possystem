@@ -1,0 +1,68 @@
+# ============================================================
+# Smash Tag — daily sales via SFTP
+# ============================================================
+# The client's POS drops one CSV per day onto SFTP To Go. No browser, no
+# login page, no bot detection — so unlike the delivery partners this runs
+# headless and can sit on a GitHub Actions schedule.
+#
+# The export is already close to Supy's own upload format: seven columns that
+# map one-to-one, including BOTH net and gross. Nothing here calculates VAT.
+# That matters — the effective rate is 1.1777, not 1.2, because some lines
+# (water, cold food) are zero-rated. Deriving one column from the other would
+# be wrong on those rows.
+# ============================================================
+
+client:
+  name: "Smash Tag"
+  destination: "Smash Tag"          # entity name used in the output filename
+
+connection:
+  host_env: SFTP_SMASH_TAG_HOST
+  username_env: SFTP_SMASH_TAG_USERNAME
+  password_env: SFTP_SMASH_TAG_PASSWORD
+  port: 22
+  remote_dir: "/"
+  # smashtag_sales_2026-09-07_to_2026-09-07.csv — the date is captured from
+  # the FILENAME, not trusted from inside the file.
+  filename_pattern: '^smashtag_sales_(?P<date>\d{4}-\d{2}-\d{2})_to_\d{4}-\d{2}-\d{2}\.csv$'
+  # A file still being written looks complete but is truncated. Anything
+  # modified in the last minute is left for the next run.
+  min_age_seconds: 60
+
+columns:
+  sales_date: "Sales date"
+  item_id: "Item ID"
+  item_name: "POS item name / code"
+  qty: "Quantity sold"
+  discount: "Discount value"
+  net: "Total sales excl. tax"
+  gross: "Total sales incl. tax"
+
+output:
+  date_format: "%d-%b-%Y"
+
+# Values arrive with thousands separators ("2,991.50"), which float() rejects.
+# Blank discounts are normal — 101 of 107 rows on the sample day — and mean
+# zero, not missing.
+parsing:
+  strip_thousands: true
+  blank_numeric_is_zero: true
+
+# A day with no file is the failure mode that hides. If the newest file on the
+# server is older than this, the run says so rather than reporting success.
+alerting:
+  warn_if_newest_older_than_hours: 36
+
+email:
+  recipients:
+    - vaishnavi@supy.io
+    - charlotte@supy.io
+    - customer.care@supy.io
+  # Appended to the body. The first backfill covers weeks at once, and nothing
+  # from this client has ever been uploaded automatically before, so anything
+  # already keyed by hand would be counted twice.
+  notes: |
+    Note on VAT: this export gives net AND gross for every line, so nothing is
+    calculated here. The effective rate runs ~1.176, not 1.20, because some
+    items (water, cold food) are zero-rated — deriving one column from the
+    other would be wrong.

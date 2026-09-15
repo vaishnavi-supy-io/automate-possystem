@@ -1,47 +1,108 @@
 item_name,price_inc_tax
 # ============================================================
 # JustEat Business - unit price INCLUDING VAT, GBP.
-# Split from the shared menu_prices.csv on 2026-09-08.
+# Source: the "Just Eat Business - Menu Pricing" rate card, supplied
+# 2026-09-08. 89 items — the full card, not only those seen so far, so new
+# menu items do not fail the run.
 #
-# 21 items, from a live unattended scrape of 2026-09-08 covering
-# 2026-09-01 to 2026-09-07 (30 line items).
+# The card also lists ex-VAT prices; every pair divides by exactly 1.2, which
+# confirms pricing.tax_divisor 1.2 with price_includes_tax: true.
 #
-# WHY THIS FILE IS SEPARATE FROM HOMECOOK'S:
-# Street Food charges different prices per channel. &Dine runs almost
-# exactly 1.6x Feedr on every item where both are observed. A single
-# shared sheet forces one price on every lookup-priced channel, so
-# whichever channel it was not derived from is silently wrong.
-#
-# EVERY ROW IS COMMENTED OUT ON PURPOSE. The figures are what OTHER
-# channels charge - reference points, NOT JustEat Business's rate card.
-# Confirm each against the 'JustEat Business - Menu Pricing' tab, then
-# uncomment. An item left commented FAILS the run, which is intended:
-# a guessed price corrupts the customer's food-cost numbers.
-# ------------------------------------------------------------
-# ONE reference only (Feedr) - still needs confirming, not a JEB price:
-# 1 Massaman Beef Bao Bun,3.72                            # feedr 3.72
-# 2 Bao Bun,7.18                                          # feedr 7.18
-# Chicken Satay and Peanut Sauce,7.47                     # feedr 7.47
-# Crispy Duck Rolls with hoisin,4.34                      # feedr 4.34
-# Massaman (Beef),8.09                                    # feedr 8.09
-# Red Curry (Chicken),7.47                                # feedr 7.47
-# Thai Green Curry (Chicken),7.47                         # feedr 7.47
-# Tofu Peanut Skewers,4.06                                # feedr 4.06
-# Vegetarian Spring Rolls,3.72                            # feedr 3.72
-#
-# CHANNELS DISAGREE - do NOT pick one without the rate card:
-# Chicken Dumplings,                                      # anddine 6.95 | feedr 4.34
-# Pad Thai (Beef),                                        # anddine 12.95 | feedr 8.09
-# Pad Thai (Chicken),                                     # anddine 11.95 | feedr 7.47
-# Pad Thai (Prawns),                                      # anddine 12.95 | feedr 8.09
-# Pad Thai (Tofu),                                        # anddine 11.95 | feedr 7.18
-# Prawn Crackers,                                         # anddine 4.20 | feedr 2.19
-# Stir Fry Chilli & Basil (Beef),                         # anddine 12.95 | feedr 8.09
-# Stir Fry Chilli & Basil (Chicken),                      # anddine 11.95 | feedr 7.47
-# Stir Fry Chilli & Basil (Tofu),                         # anddine 11.95 | feedr 7.47
-# Vegetable Dumplings,                                    # anddine 6.95 | feedr 4.34
-#
-# NO reference anywhere in this repo - must come from the client:
-# Chicken Tom Yum,
-# Tofu with Rice Peanut Sauce,
+# WHY THIS FILE IS SEPARATE FROM HOMECOOK'S: Street Food charges per channel
+# and the gaps are large. JEB tracks &Dine, NOT Feedr:
+#   Chicken Satay and Peanut Sauce   Feedr 7.47  ->  JEB 11.95
+#   Massaman (Beef)                  Feedr 8.09  ->  JEB 12.95
+#   Vegetarian Spring Rolls          Feedr 3.72  ->  JEB  6.95
+#   2 Bao Bun                        Feedr 7.18  ->  JEB 13.90
+# Every item that had a lone Feedr reference would have been priced 40-60% low
+# had it been inferred rather than confirmed. That is exactly why an unpriced
+# item fails the run instead of falling back to a comparable channel.
 # ============================================================
+Prawn Crackers,3.50
+Vegan Summer Rolls,6.95
+Vegetarian Spring Rolls,6.95
+Crispy Duck Rolls with hoisin,6.95
+Spicy Chicken Bites,6.95
+1 Chicken Satay and Peanut Sauce Bao Bun,6.95
+1 Massaman Beef Bao Bun,6.95
+1 Tofu Peanut Sauce Bao Bun,6.95
+2 Bao Bun,13.90
+Vegetable Dumplings,6.95
+Chicken Dumplings,6.95
+Tofu Peanut Skewers,6.95
+Chicken Satay and Peanut Sauce,11.95
+Crispy Tofu with Peanut Sauce,11.95
+Stir Fry Chilli & Basil (Chicken),11.95
+Stir Fry Chilli & Basil (Beef),12.95
+Stir Fry Chilli & Basil (Prawn),12.95
+Stir Fry Chilli & Basil (Tofu),11.95
+Thai Green Curry (Chicken),11.95
+Thai Green Curry (Tofu),11.95
+Red Curry (Chicken),11.95
+Massaman (Beef),12.95
+Pad Thai (Chicken),11.95
+Pad Thai (Beef),12.95
+Pad Thai (Prawns),12.95
+Pad Thai (Tofu),11.95
+Pad Thai Tofu (Vegan),11.50
+Sharing 4-6pp Chicken Satay and Peanut Sauce,49.95
+Sharing 4-6pp Crispy Tofu with Peanut Sauce,49.95
+Sharing 4-6pp Stir Fry Chilli & Basil (Chicken),49.95
+Sharing 4-6pp Stir Fry Chilli & Basil (Beef),59.95
+Sharing 4-6pp Stir Fry Chilli & Basil (Prawn),59.95
+Sharing 4-6pp Stir Fry Chilli & Basil (Tofu),49.95
+Sharing 4-6pp Thai Green Curry (Chicken),49.95
+Sharing 4-6pp Thai Green Curry (Tofu),49.95
+Sharing 4-6pp Red Curry (Chicken),49.95
+Sharing 4-6pp Massaman (Beef),59.95
+Sharing 4-6pp Stir Fry Mix Veg & Mushroom,49.00
+Sharing 4-6pp Pad Thai (Chicken),69.95
+Sharing 4-6pp Pad Thai (Beef),79.95
+Sharing 4-6pp Pad Thai (Prawns),79.95
+Sharing 4-6pp Pad Thai (Tofu),69.95
+Sharing 4-6pp Tofu Pad Thai (Vegan),69.95
+Sharing 4-6pp Vegetarian Spring Rolls,35.95
+Sharing 4-6pp Steamed Jasmine Rice,20.00
+Sharing 4-6pp Mixed Salad and Homemade Veggie Pickle,15.00
+Sharing 4-6pp Asian Potatoes Salad,25.00
+Sharing 4-6pp Spicy Cucumber Salad,25.00
+Sharing 4-6pp Broccoli & Sesame Dressing Salad,35.00
+Bento Box - Chicken Satay Peanut Sauce,15.95
+Bento Box - Crispy Tofu Peanut Sauce,15.95
+Bento Box - Red Curry Chicken,15.95
+Bento Box - Green Curry (Chicken),15.95
+Bento Box - Green Curry (Tofu),15.95
+Bento Box - Beef Massaman,16.95
+Chicken Tom Yum,7.50
+Prawns Tom Yum,8.50
+Tofu Tom Yum,7.50
+Tofu with Rice Peanut Sauce,11.95
+Tofu Pad Thai (Vegan),11.50
+Vegan Jay Platter for two,19.90
+Vegan Jay for four,39.50
+Mix Platter for two,19.90
+Mix Platter for four,39.50
+Deluxe Platter for two,24.90
+Deluxe Platter for four,49.50
+Mix of Bao Buns,55.95
+Rice,3.50
+Fresh Chilies,2.00
+Veggie Pickle,2.00
+Crispy Onions,1.00
+Chili Oil,1.50
+Peanut Sauce,1.50
+Green Curry Sauce,1.50
+Sweet Chili Sauce,1.00
+Sriracha Chili Sauce,1.00
+Chili Fishy Sauce,1.50
+Coke,2.95
+Diet Coke,2.95
+Coke Zero,2.95
+Aloe Vera Drink,3.50
+Aranciata San Pellegrino,3.20
+Limonata San Pellegrino,3.20
+Melograno & Aranciata San Pellegrino,3.20
+Fentimans Rose Lemonade,3.50
+Fentimans Elder Flower,3.50
+Still,2.50
+San Pellegrino Sparkling Water,3.20

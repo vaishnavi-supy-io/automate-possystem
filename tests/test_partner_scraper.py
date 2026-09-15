@@ -15,6 +15,7 @@ Run:
 import pathlib
 import sys
 from datetime import date, datetime
+from urllib.parse import parse_qsl, urlparse
 
 import pandas as pd
 import pytest
@@ -659,15 +660,23 @@ class _FakeRow:
 
 
 class _FakeNext:
+    def __init__(self, visible=True):
+        self._visible = visible
+
     def is_enabled(self):
         return True
+
+    def is_visible(self):
+        # &Dine hides, rather than removes, the button past the last page.
+        return self._visible
 
 
 class _FakePage:
     """Minimal page: two rows, and a next-control only if one is configured."""
 
-    def __init__(self, next_selector=""):
+    def __init__(self, next_selector="", next_visible=True):
         self._next_selector = next_selector
+        self._next_visible = next_visible
 
     def wait_for_selector(self, selector, timeout=None):
         return None
@@ -677,10 +686,13 @@ class _FakePage:
 
     def query_selector(self, selector):
         if self._next_selector and selector == self._next_selector:
-            return _FakeNext()
+            return _FakeNext(visible=self._next_visible)
         return None
 
     def wait_for_load_state(self, state, timeout=None):
+        return None
+
+    def wait_for_timeout(self, ms):
         return None
 
 
@@ -833,3 +845,182 @@ def test_absolute_dates_are_untouched_by_the_relative_handling():
 def test_non_relative_text_still_returns_none():
     for junk in ("", "   ", "not a date", "Tomorrowland"):
         assert ps.parse_date(junk, "", reference=REF) is None
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# URL pagination (?page=N)
+#
+# Added 2026-09-11 for the Jul–Aug backfill. JustEat Business and &Dine both
+# expose NO clickable pager, so the engine read page one and stopped — silently,
+# because the cap warning only fires when a next_page control exists. A run
+# asked for 01-Jul returned the most recent page instead.
+# ──────────────────────────────────────────────────────────────────────────────
+
+class _DatedRow:
+    """A list row whose cells answer by selector, like a real one."""
+
+    def __init__(self, reference, date_text=""):
+        self._cells = {".ref": reference, ".date": date_text}
+
+    def query_selector(self, selector):
+        text = self._cells.get(selector)
+        return _Cell(text) if text else None
+
+    def text_content(self):
+        return " ".join(self._cells.values())
+
+
+class _Cell:
+    def __init__(self, text):
+        self._text = text
+
+    def text_content(self):
+        return self._text
+
+
+class _UrlPage:
+    """Serves a different set of rows per ?page=N, and records what was asked."""
+
+    def __init__(self, pages):
+        self.pages = pages            # {page_number: [rows]}
+        self.visited = []
+        self._current = 1
+
+    def goto(self, url, **kwargs):
+        self.visited.append(url)
+        number = int(dict(parse_qsl(urlparse(url).query)).get("page", 1))
+        self._current = number
+
+    def query_selector_all(self, selector):
+        # A portal past its last page re-serves the final one.
+        return self.pages.get(self._current, self.pages[max(self.pages)])
+
+    def query_selector(self, selector):
+        return None                   # no clickable pager
+
+    def wait_for_selector(self, selector, timeout=None):
+        return None
+
+    def wait_for_load_state(self, state, timeout=None):
+        return None
+
+
+def _url_cfg(max_pages=10, url_param="page", stop_when_older=True):
+    return {
+        "portal": {"orders_url": "https://host/orders?tab=Past&page=1"},
+        "selectors": {"order_rows": ".row", "next_page": "",
+                      "order_reference": ".ref", "order_date": ".date"},
+        "filters": {"keep_status": []},
+        "dates": {"list_format": "%d/%m/%Y"},
+        "pagination": {"max_pages": max_pages, "url_param": url_param,
+                       "stop_when_older": stop_when_older},
+        "orders": {"open_mode": "click"},
+        "browser": {},
+    }
+
+
+def test_page_url_swaps_the_page_number_and_keeps_other_params():
+    got = ps._page_url("https://host/orders?tab=Past&page=1", "page", 4)
+    assert dict(parse_qsl(urlparse(got).query)) == {"tab": "Past", "page": "4"}
+
+
+def test_page_url_adds_the_param_when_the_url_has_none():
+    assert ps._page_url("https://host/orders", "page", 2).endswith("?page=2")
+
+
+def test_url_paging_walks_past_page_one(monkeypatch):
+    """The regression that lost July: page one only, with no warning."""
+    _capture_log(monkeypatch)
+    page = _UrlPage({
+        1: [_DatedRow("A", "10/08/2026")],
+        2: [_DatedRow("B", "09/08/2026")],
+        3: [_DatedRow("C", "08/08/2026")],
+    })
+    got = ps._collect_order_links(page, _url_cfg(),
+                                  datetime(2026, 8, 1), datetime(2026, 8, 31))
+
+    assert [o["reference"] for o in got] == ["A", "B", "C"]
+    assert "page=2" in page.visited[0] and "page=3" in page.visited[1]
+    # tab=Past must survive, or the walk silently leaves the Past tab.
+    assert all("tab=Past" in url for url in page.visited)
+
+
+def test_url_paging_stops_when_the_portal_repeats_a_page(monkeypatch):
+    """Past the end, the portal re-serves the last page — do not re-collect it."""
+    _capture_log(monkeypatch)
+    page = _UrlPage({1: [_DatedRow("A", "10/08/2026")],
+                     2: [_DatedRow("B", "09/08/2026")]})
+    got = ps._collect_order_links(page, _url_cfg(max_pages=10),
+                                  datetime(2026, 8, 1), datetime(2026, 8, 31))
+
+    assert [o["reference"] for o in got] == ["A", "B"]
+
+
+def test_paging_stops_once_a_page_predates_the_window(monkeypatch):
+    """Newest-first lists: one page older than date_from ends the walk."""
+    _capture_log(monkeypatch)
+    page = _UrlPage({
+        1: [_DatedRow("A", "05/08/2026")],
+        2: [_DatedRow("B", "20/07/2026")],     # older than date_from → stop
+        3: [_DatedRow("C", "01/07/2026")],
+    })
+    got = ps._collect_order_links(page, _url_cfg(),
+                                  datetime(2026, 8, 1), datetime(2026, 8, 31))
+
+    assert [o["reference"] for o in got] == ["A"]
+    assert len(page.visited) == 1          # page 3 was never loaded
+
+
+def test_paging_does_not_stop_early_when_stop_when_older_is_off(monkeypatch):
+    """Opt-out for any portal that is not sorted newest-first."""
+    _capture_log(monkeypatch)
+    page = _UrlPage({
+        1: [_DatedRow("A", "20/07/2026")],
+        2: [_DatedRow("B", "05/08/2026")],
+    })
+    got = ps._collect_order_links(page, _url_cfg(stop_when_older=False),
+                                  datetime(2026, 8, 1), datetime(2026, 8, 31))
+
+    assert [o["reference"] for o in got] == ["B"]
+
+
+def test_an_invisible_pager_button_ends_the_walk(monkeypatch):
+    """
+    &Dine keeps its pager buttons in the DOM and hides the one past the last
+    page. Treating hidden-but-enabled as clickable blocks for the full 30s
+    click timeout and then aborts the run.
+    """
+    calls = _capture_log(monkeypatch)
+    ps._collect_order_links(_FakePage(next_selector=".next", next_visible=False),
+                            _cfg(next_page=".next", max_pages=10),
+                            datetime(2026, 8, 27), datetime(2026, 9, 1))
+
+    warned = [c for c in calls if "pagination_cap_hit" in str(c)]
+    assert not warned, "the last page is not a truncation"
+
+
+class _ShiftingPage(_UrlPage):
+    """A list that shows one order on both page 1 and page 2 — &Dine's shape."""
+
+    def query_selector_all(self, selector):
+        return self.pages.get(self._current, self.pages[max(self.pages)])
+
+
+def test_an_order_on_two_pages_is_collected_once(monkeypatch):
+    """
+    A list that shifts between page loads repeats a boundary row on the next
+    page. Collecting it twice writes its line items twice — &Dine booked
+    £1,230.58 against a £732.35 order this way on 2026-09-11.
+    """
+    calls = _capture_log(monkeypatch)
+    straddler = _DatedRow("SAT-32L8L", "30/07/2026")
+    page = _ShiftingPage({
+        1: [_DatedRow("SAT-6TUVR", "28/08/2026"), straddler],
+        2: [_DatedRow("SAT-32L8L", "30/07/2026"), _DatedRow("SAT-U45QF", "30/07/2026")],
+    })
+    got = ps._collect_order_links(page, _url_cfg(stop_when_older=False),
+                                  datetime(2026, 7, 1), datetime(2026, 8, 31))
+
+    assert [o["reference"] for o in got] == ["SAT-6TUVR", "SAT-32L8L", "SAT-U45QF"]
+    listed = [c for c in calls if "order_list" in str(c)]
+    assert listed and listed[0][1]["extra"]["skipped_duplicate"] == 1
