@@ -253,11 +253,18 @@ def test_blank_credential_counts_as_missing(monkeypatch):
         da.find_branch("westfield"))
 
 
-def test_all_branches_run_skips_branches_without_credentials(monkeypatch,
-                                                             capsys):
-    """--all-branches must exit 0 and launch no browser when a branch is
-    awaiting credentials, or the daily job alarms every morning until all
-    nine are set up."""
+def test_all_branches_run_launches_no_browser_for_unconfigured_branch(
+        monkeypatch, capsys):
+    """An unconfigured branch is reported and skipped, never driven to a login
+    it cannot complete.
+
+    CHANGED 2026-09-15. This used to assert exit 0, so that the daily job would
+    not alarm every morning while the nine branches were being onboarded. The
+    intent was right but the rule was too broad: NO branch ever got credentials,
+    so the scheduled run went green in 39 seconds every morning for weeks while
+    Black Bear received no sales at all. A green run has to mean something
+    arrived. Delivering nothing now exits 3 — see the partial-onboarding test
+    below for the case the original rule was protecting."""
     monkeypatch.setattr(da, "CONFIG", {**da.CONFIG, "branches": [
         {"key": "westfield", "supy_branch": "Black Bear Burger Westfield",
          "env_prefix": "DINES_WF"}]})
@@ -270,9 +277,40 @@ def test_all_branches_run_skips_branches_without_credentials(monkeypatch,
     monkeypatch.setattr(da, "sync_playwright", no_browser)
     monkeypatch.setattr(sys, "argv", ["dines_automation.py", "--all-branches",
                                       "--no-email"])
-    assert da.main() == 0
+    assert da.main() == 3
     out = capsys.readouterr().out
     assert "no_creds" in out and "westfield" in out
+
+
+def test_partial_credentials_still_run_rather_than_reporting_nothing(
+        monkeypatch):
+    """One branch configured and one not is onboarding, not silence.
+
+    The zero-delivery rule keys on "not one branch could run", so a branch that
+    is ready must still be attempted — it joins the daily run the day its
+    secrets are added, exactly as before."""
+    monkeypatch.setattr(da, "CONFIG", {**da.CONFIG, "branches": [
+        {"key": "westfield", "supy_branch": "Black Bear Burger Westfield",
+         "env_prefix": "DINES_WF"},
+        {"key": "camden", "supy_branch": "Black Bear Burger Camden",
+         "env_prefix": "DINES_CM"}]})
+    for suffix in ("USERNAME", "PASSWORD", "PIN"):
+        monkeypatch.delenv(f"DINES_WF_{suffix}", raising=False)
+        monkeypatch.setenv(f"DINES_CM_{suffix}", "set")
+
+    class _Reached(Exception):
+        pass
+
+    def reached():
+        raise _Reached
+
+    monkeypatch.setattr(da, "sync_playwright", reached)
+    monkeypatch.setattr(sys, "argv", ["dines_automation.py", "--all-branches",
+                                      "--no-email"])
+    # Getting as far as launching a browser is the assertion: the run was not
+    # short-circuited as "nothing to deliver" just because one branch is unset.
+    with pytest.raises(_Reached):
+        da.main()
 
 
 def test_named_branch_without_credentials_fails_loudly(monkeypatch, capsys):
