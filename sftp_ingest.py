@@ -77,6 +77,13 @@ def _state_path(cfg: dict) -> pathlib.Path:
     return d / "processed.json"
 
 
+def _digits(value: str) -> str:
+    """Just the digits of a date string, so "2026-09-14" and "20260914" compare
+    equal. Clients name their exports however they like; --date should not have
+    to know which."""
+    return re.sub(r"\D", "", value or "")
+
+
 def load_processed(cfg: dict) -> dict:
     p = _state_path(cfg)
     if not p.exists():
@@ -371,7 +378,15 @@ def main() -> int:
         seen = {} if args.all else load_processed(cfg)
         todo = [f for f in files if args.all or f["name"] not in seen]
         if args.date:
-            todo = [f for f in todo if f["date"] == args.date]
+            # Each client names files their own way, and the date group of
+            # filename_pattern comes back in whatever shape that is: Smash Tag
+            # gives "2026-09-14", BrewDog gives "20260914". A literal ==
+            # against --date therefore matched one client and silently matched
+            # NOTHING for the other — no error, no file, an ingest that quietly
+            # did nothing every morning. Compare on digits alone so the flag
+            # means the same day whatever the client calls it.
+            wanted = _digits(args.date)
+            todo = [f for f in todo if _digits(f["date"]) == wanted]
         if args.limit:
             todo = todo[:args.limit]
 
