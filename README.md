@@ -612,12 +612,16 @@ All scheduled reports run in **GitHub Actions**, not on anyone's laptop, so
 they fire whether or not a machine is awake. Every workflow is on
 `cron: "0 4 * * *"` (04:00 UTC = 08:00 Dubai) and reports **yesterday**.
 
-| Client | Workflow | Covers |
-|---|---|---|
-| BMD | `sapapad_daily.yml` | 9 UAE branches |
-| Black Bear Burger | `dines_daily.yml` | 4 Dines branches (of 9 configured) |
-| Street Food Ltd. | `streetfood_daily.yml` | `deliveroo`, `anddine`, `feedr`, `homecook` |
-| FLARE | `talabat_daily.yml` | Talabat UAE |
+| Client | Workflow | Covers | Fires |
+|---|---|---|---|
+| BMD | `sapapad_daily.yml` | 9 UAE branches | 04:00 UTC |
+| Falafel Frayha / Heal / Pinza | `sapaad_tenants_daily.yml` | one job per tenant | 04:00 UTC |
+| Black Bear Burger | `dines_daily.yml` | 9 Dines branches, **0 credentialed** | 04:00 UTC |
+| Street Food Ltd. | `streetfood_daily.yml` | `deliveroo`, `anddine`, `feedr`, `homecook` | 04:00 UTC |
+| FLARE | `talabat_daily.yml` | Talabat UAE (inbound email) | 04:00 UTC |
+| Symphony | `symphony_daily.yml` | Micros Symphony — **blocked, see below** | 04:00 UTC |
+| BrewDog / Smash Tag | `sftp_daily.yml` | files dropped on SFTP | 05:00 UTC |
+| *(all of the above)* | `delivery_digest.yml` | did each client actually run? | 06:00 UTC |
 
 Each one retries once with `--force-login`, then emails a failure alert saying
 the sales must be uploaded by hand, and attaches logs, screenshots and raw
@@ -625,28 +629,52 @@ CSVs as a 14-day artifact. All support `workflow_dispatch`, so any day can be
 re-run by hand from the Actions tab; `streetfood_daily.yml` also takes optional
 `date` and `only` inputs for a targeted re-run.
 
-### ⚠️ Three things stop this working today
+### How this was fixed, and what it cost to find (2026-09-15)
 
-**1. Every workflow is `disabled_inactivity`.** GitHub disables scheduled
-workflows after 60 days without repository activity, measured on what is
-**pushed** — and `origin/main` has not moved since **2026-06-18**. This is
-what silently killed BMD's reports after 18 Aug.
+A client asked for four missing days. The investigation found the reports had
+been sent — but it also found that **one client out of six was actually being
+served by the automation**, and had been for weeks.
+
+Every workflow was enabled and firing on time. The credentials simply were not
+there. GitHub held 11 secrets, eight of them BMD's or shared, while `.env` on
+the laptop held 50. So BMD ran, and everyone else failed at the login or never
+had a workflow at all. **The credentials in `.env` are not the credentials
+Actions uses.** Adding a key locally changes nothing in the cloud:
 
 ```bash
-gh workflow list --all      # confirm the state
-gh workflow enable <id>     # for each workflow you want
-git push origin main        # REQUIRED, or they are disabled again in 60 days
+gh secret set DELIVEROO_PASSWORD      # reads the value from stdin, never argv
+gh secret list                        # names and dates only — never values
 ```
 
-**2. Secrets must exist in the repo** (Settings → Secrets → Actions). Shared:
-`GMAIL_USER`, `GMAIL_APP_PASSWORD`, `REPORT_RECIPIENT`. Then per client:
-Dines needs 12 (`DINES_CW/VIC/OS/PD_USERNAME|PASSWORD|PIN`); Street Food needs
-8 (`DELIVEROO_*`, `ANDDINE_*`, `FEEDR_*`, `HOMECOOK_*` username/password);
-BMD and Talabat already have theirs.
+26 secrets were uploaded that day: Street Food's 8, the three Sapaad tenants'
+6, and 12 for the SFTP clients.
 
-**3. There is a duplicate BMD workflow.** `daily_sapapad_report.yml` and
-`sapapad_daily.yml` share the same cron; the first has failed every day in
-~30s while the second succeeds in ~6m30s. Delete the first.
+**Three failure modes were worth more than the fix.**
+
+**Green does not mean delivered.** `dines_daily.yml` passed in 39 seconds every
+morning — nine branches reported `no_creds`, zero rows, exit 0. A run that
+delivers nothing now exits 3. Partial credentials stay green on purpose, so a
+branch still joins the run the day its secrets are added.
+
+**Nothing was watching for nothing.** Every pipeline shouts when it fails; none
+can notice never having run, which is exactly how BMD went quiet after 18 Aug
+when GitHub disabled the schedules for inactivity. `delivery_digest.yml` asks
+the Actions API whether each client ran today, and mails only when one did not
+— a daily all-clear is how people learn to ignore an alert.
+
+**A runner has no memory.** `sftp_ingest.py` skips files it has already
+processed, and that record lives in `state/`. A GitHub runner is destroyed
+after every run, so a bare invocation would re-email every file on the server
+every morning. `sftp_daily.yml` passes `--date` explicitly instead.
+
+### Still blocked, and on whom
+
+| Client | Blocked on |
+|---|---|
+| **Black Bear (Dines)** | The branch logins and PINs do not exist anywhere — not in `.env`, not in Actions. Someone has to get them from Black Bear. Until then all 9 branches are empty by definition and the run exits 3. |
+| **Symphony** | `.env` has `SIMPHONY_TREATS_*` for enterprise `IRM` on `ors-idm.mte5...`; `symphony_config.yaml` targets enterprise `MH` on `ors-idm.marr3...`. **Different tenants.** Either the config points at the wrong portal or the `MH` credentials were never captured. Not a renaming. |
+| **FLARE (Talabat)** | Runs green doing nothing — "No new FLARE report found". The client has to send the file. |
+| **BIM / Thomos Hotel** | SFTP secrets are uploaded, but neither has a config file, so neither can be scheduled. |
 
 ### What cannot be automated in the cloud, and why
 
