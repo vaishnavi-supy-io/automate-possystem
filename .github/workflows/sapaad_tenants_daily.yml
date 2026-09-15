@@ -1,0 +1,181 @@
+name: Sapaad Tenants Daily POS Report
+
+# The three Sapaad accounts added 2026-09-11 (Falafel Frayha, Heal Restaurant,
+# Pinza) run the SAME engine as BMD against the same portal — only the tenant
+# identity and credentials differ, so they need no code of their own, just a
+# config and a schedule.
+#
+# One job per tenant via a matrix: a tenant whose login breaks fails alone
+# rather than taking the other two down with it. fail-fast is off for the same
+# reason.
+
+on:
+  schedule:
+    # 08:00 Dubai time (UTC+4) = 04:00 UTC — same slot as BMD.
+    - cron: "0 4 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "Report this date instead of yesterday (YYYY-MM-DD)"
+        required: false
+      only:
+        description: "Run one tenant only (falafel | heal | pinza)"
+        required: false
+
+jobs:
+  run-tenant:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slug: falafel
+            label: Falafel Frayha
+            config: sapaad_falafel_config.yaml
+            user_env: SAPAAD_FALAFEL_FRAYHA_USERNAME
+            pass_env: SAPAAD_FALAFEL_FRAYHA_PASSWORD
+          - slug: heal
+            label: Heal Restaurant
+            config: sapaad_heal_config.yaml
+            user_env: SAPAAD_HEAL_RESTAURANT_USERNAME
+            pass_env: SAPAAD_HEAL_RESTAURANT_PASSWORD
+          - slug: pinza
+            label: Pinza
+            config: sapaad_pinza_config.yaml
+            user_env: SAPAAD_PINZA_SAPAAD_USERNAME
+            pass_env: SAPAAD_PINZA_SAPAAD_PASSWORD
+
+    steps:
+      - name: Skip tenants not asked for
+        id: gate
+        run: |
+          only="${{ github.event.inputs.only }}"
+          if [ -n "$only" ] && [ "$only" != "${{ matrix.slug }}" ]; then
+            echo "run=false" >> "$GITHUB_OUTPUT"
+            echo "Skipping ${{ matrix.slug }} — this dispatch asked for $only."
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Checkout repository
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        if: steps.gate.outputs.run == 'true'
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        if: steps.gate.outputs.run == 'true'
+        run: pip install -r requirements.txt
+
+      - name: Install Playwright browsers
+        if: steps.gate.outputs.run == 'true'
+        run: playwright install chromium --with-deps
+
+      - name: Run ${{ matrix.label }} (attempt 1)
+        id: attempt1
+        if: steps.gate.outputs.run == 'true'
+        continue-on-error: true
+        env:
+          SAPAAD_FALAFEL_FRAYHA_USERNAME:  ${{ secrets.SAPAAD_FALAFEL_FRAYHA_USERNAME }}
+          SAPAAD_FALAFEL_FRAYHA_PASSWORD:  ${{ secrets.SAPAAD_FALAFEL_FRAYHA_PASSWORD }}
+          SAPAAD_HEAL_RESTAURANT_USERNAME: ${{ secrets.SAPAAD_HEAL_RESTAURANT_USERNAME }}
+          SAPAAD_HEAL_RESTAURANT_PASSWORD: ${{ secrets.SAPAAD_HEAL_RESTAURANT_PASSWORD }}
+          SAPAAD_PINZA_SAPAAD_USERNAME:    ${{ secrets.SAPAAD_PINZA_SAPAAD_USERNAME }}
+          SAPAAD_PINZA_SAPAAD_PASSWORD:    ${{ secrets.SAPAAD_PINZA_SAPAAD_PASSWORD }}
+          GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python sapapad_automation.py --config ${{ matrix.config }} --per-branch \
+            ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
+
+      - name: Retry — wait 2 minutes then try again
+        if: steps.gate.outputs.run == 'true' && steps.attempt1.outcome == 'failure'
+        run: sleep 120
+
+      - name: Run ${{ matrix.label }} (attempt 2 — retry)
+        id: attempt2
+        if: steps.gate.outputs.run == 'true' && steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          SAPAAD_FALAFEL_FRAYHA_USERNAME:  ${{ secrets.SAPAAD_FALAFEL_FRAYHA_USERNAME }}
+          SAPAAD_FALAFEL_FRAYHA_PASSWORD:  ${{ secrets.SAPAAD_FALAFEL_FRAYHA_PASSWORD }}
+          SAPAAD_HEAL_RESTAURANT_USERNAME: ${{ secrets.SAPAAD_HEAL_RESTAURANT_USERNAME }}
+          SAPAAD_HEAL_RESTAURANT_PASSWORD: ${{ secrets.SAPAAD_HEAL_RESTAURANT_PASSWORD }}
+          SAPAAD_PINZA_SAPAAD_USERNAME:    ${{ secrets.SAPAAD_PINZA_SAPAAD_USERNAME }}
+          SAPAAD_PINZA_SAPAAD_PASSWORD:    ${{ secrets.SAPAAD_PINZA_SAPAAD_PASSWORD }}
+          GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python sapapad_automation.py --config ${{ matrix.config }} --per-branch --force-login \
+            ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
+
+      - name: Send failure alert email
+        if: steps.gate.outputs.run == 'true' && steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+          TENANT_LABEL:       ${{ matrix.label }}
+          TENANT_CONFIG:      ${{ matrix.config }}
+        run: |
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+
+          user  = os.environ["GMAIL_USER"]
+          pw    = os.environ["GMAIL_APP_PASSWORD"]
+          to    = os.environ["REPORT_RECIPIENT"]
+          label = os.environ["TENANT_LABEL"]
+          cfg   = os.environ["TENANT_CONFIG"]
+          run   = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo  = os.environ.get("GITHUB_REPOSITORY", "")
+
+          body = (
+              f"The daily {label} POS report did not go out this morning.\n\n"
+              f"It was tried twice, the second time with a fresh login, and\n"
+              f"failed both times. Today's sales for {label} need to be\n"
+              f"uploaded by hand.\n\n"
+              f"Run log: https://github.com/{repo}/actions/runs/{run}\n\n"
+              f"To try again: re-run from the Actions tab, or locally\n"
+              f"  python sapapad_automation.py --config {cfg} --per-branch\n"
+          )
+          msg = MIMEText(body)
+          msg["Subject"] = f"[!] {label} POS report FAILED - upload by hand"
+          msg["From"], msg["To"] = user, to
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+              s.login(user, pw)
+              s.sendmail(user, to.split(","), msg.as_string())
+          print("Failure alert sent.")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.gate.outputs.run == 'true' && steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1
+
+      - name: Upload outputs as artifact
+        if: always() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sapaad-${{ matrix.slug }}-${{ github.run_id }}
+          path: |
+            output/*.xlsx
+            logs/*.jsonl
+          retention-days: 30
+
+      - name: Upload screenshots on failure
+        if: failure() && steps.gate.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: sapaad-${{ matrix.slug }}-failure-${{ github.run_id }}
+          path: screenshots/
+          retention-days: 7

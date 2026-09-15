@@ -1,0 +1,158 @@
+name: SFTP Feeds Daily Ingest
+
+# Clients whose POS drops a CSV onto SFTP rather than exposing a portal.
+# There is no browser here, so these jobs are cheap and quick — no Playwright,
+# no login, just fetch, convert and email.
+#
+# ⚠️  WHY --date AND NOT A BARE RUN. sftp_ingest.py remembers what it has
+#     already processed in state/<client>/, and skips those files. That state
+#     lives on disk, and a GitHub runner is destroyed after every run — so a
+#     bare `sftp_ingest.py --config x.yaml` on Actions would see an EMPTY
+#     memory each morning and re-process, re-convert and RE-EMAIL every file
+#     the server still holds. Naming the one date wanted makes the run
+#     idempotent without needing the state to survive.
+#
+#     The flip side: a client who uploads late has no file when this runs, and
+#     the job exits 0 having done nothing. That silence is caught by
+#     monitor_daily.yml, which checks that data actually ARRIVED.
+
+on:
+  schedule:
+    # 09:00 Dubai (UTC+4) = 05:00 UTC. An hour after the portal pipelines, so
+    # a client with an overnight export has landed it.
+    - cron: "0 5 * * *"
+  workflow_dispatch:
+    inputs:
+      date:
+        description: "File date to ingest (YYYY-MM-DD). Default: yesterday"
+        required: false
+      all:
+        description: "Reprocess everything on the server (ignores --date)"
+        type: boolean
+        default: false
+
+jobs:
+  ingest:
+    name: ${{ matrix.label }}
+    runs-on: ubuntu-22.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - slug: brewdog
+            label: BrewDog UK & Ireland
+            config: brewdog_sftp.yaml
+          - slug: smashtag
+            label: Smash Tag
+            config: smashtag_sftp.yaml
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+          cache-dependency-path: requirements.txt
+
+      - name: Install Python dependencies
+        run: pip install -r requirements.txt
+
+      - name: Work out which date to ingest
+        id: when
+        run: |
+          if [ "${{ github.event.inputs.all }}" = "true" ]; then
+            echo "args=--all" >> "$GITHUB_OUTPUT"
+            echo "Reprocessing everything on the server."
+          elif [ -n "${{ github.event.inputs.date }}" ]; then
+            echo "args=--date ${{ github.event.inputs.date }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "args=--date $(date -u -d 'yesterday' +%Y-%m-%d)" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Ingest ${{ matrix.label }} (attempt 1)
+        id: attempt1
+        continue-on-error: true
+        env:
+          SFTP_BREWDOG_UK_IRELANG_HOST:     ${{ secrets.SFTP_BREWDOG_UK_IRELANG_HOST }}
+          SFTP_BREWDOG_UK_IRELANG_USERNAME: ${{ secrets.SFTP_BREWDOG_UK_IRELANG_USERNAME }}
+          SFTP_BREWDOG_UK_IRELANG_PASSWORD: ${{ secrets.SFTP_BREWDOG_UK_IRELANG_PASSWORD }}
+          SFTP_SMASH_TAG_HOST:              ${{ secrets.SFTP_SMASH_TAG_HOST }}
+          SFTP_SMASH_TAG_USERNAME:          ${{ secrets.SFTP_SMASH_TAG_USERNAME }}
+          SFTP_SMASH_TAG_PASSWORD:          ${{ secrets.SFTP_SMASH_TAG_PASSWORD }}
+          GMAIL_USER:                       ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:               ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:                 ${{ secrets.REPORT_RECIPIENT }}
+        run: python sftp_ingest.py --config ${{ matrix.config }} ${{ steps.when.outputs.args }}
+
+      - name: Retry once after 60s
+        if: steps.attempt1.outcome == 'failure'
+        run: sleep 60
+
+      - name: Ingest ${{ matrix.label }} (attempt 2 — retry)
+        id: attempt2
+        if: steps.attempt1.outcome == 'failure'
+        continue-on-error: true
+        env:
+          SFTP_BREWDOG_UK_IRELANG_HOST:     ${{ secrets.SFTP_BREWDOG_UK_IRELANG_HOST }}
+          SFTP_BREWDOG_UK_IRELANG_USERNAME: ${{ secrets.SFTP_BREWDOG_UK_IRELANG_USERNAME }}
+          SFTP_BREWDOG_UK_IRELANG_PASSWORD: ${{ secrets.SFTP_BREWDOG_UK_IRELANG_PASSWORD }}
+          SFTP_SMASH_TAG_HOST:              ${{ secrets.SFTP_SMASH_TAG_HOST }}
+          SFTP_SMASH_TAG_USERNAME:          ${{ secrets.SFTP_SMASH_TAG_USERNAME }}
+          SFTP_SMASH_TAG_PASSWORD:          ${{ secrets.SFTP_SMASH_TAG_PASSWORD }}
+          GMAIL_USER:                       ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD:               ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:                 ${{ secrets.REPORT_RECIPIENT }}
+        run: python sftp_ingest.py --config ${{ matrix.config }} ${{ steps.when.outputs.args }}
+
+      - name: Send failure alert email
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        env:
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+          CLIENT_LABEL:       ${{ matrix.label }}
+        run: |
+          python - <<'EOF'
+          import os, smtplib
+          from email.mime.text import MIMEText
+
+          user  = os.environ["GMAIL_USER"]
+          pw    = os.environ["GMAIL_APP_PASSWORD"]
+          to    = os.environ["REPORT_RECIPIENT"]
+          label = os.environ["CLIENT_LABEL"]
+          run   = os.environ.get("GITHUB_RUN_ID", "unknown")
+          repo  = os.environ.get("GITHUB_REPOSITORY", "")
+
+          body = (
+              f"The {label} SFTP ingest did not complete this morning.\n\n"
+              f"Either the server could not be reached, or the file that is\n"
+              f"normally there was not there. Today's {label} sales will not\n"
+              f"reach Supy until someone looks.\n\n"
+              f"Run log: https://github.com/{repo}/actions/runs/{run}\n"
+          )
+          msg = MIMEText(body)
+          msg["Subject"] = f"[!] {label} SFTP ingest FAILED"
+          msg["From"], msg["To"] = user, to
+          with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+              s.login(user, pw)
+              s.sendmail(user, to.split(","), msg.as_string())
+          print("Failure alert sent.")
+          EOF
+
+      - name: Fail the job if both attempts failed
+        if: steps.attempt1.outcome == 'failure' && steps.attempt2.outcome == 'failure'
+        run: exit 1
+
+      - name: Upload outputs as artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: sftp-${{ matrix.slug }}-${{ github.run_id }}
+          path: |
+            output/*.xlsx
+            logs/*.jsonl
+          retention-days: 30

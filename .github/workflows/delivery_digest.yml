@@ -1,0 +1,134 @@
+name: Daily Delivery Digest
+
+# Did every client's report actually go out this morning?
+#
+# Each pipeline shouts when it FAILS. None of them can notice the case that
+# actually bit us: a pipeline that never ran at all. BMD's reports stopped on
+# 18 Aug because GitHub disabled the schedule for repository inactivity — no
+# failure, no alert, no run, and three weeks passed before a client asked.
+#
+# This job asks the Actions API one question per client: was there a run
+# today, and did it succeed? It needs no local files and no portal logins, so
+# it cannot itself go quiet for the same reasons the pipelines can.
+#
+# It does NOT check the contents of what was sent. "Ran green but delivered
+# nothing" is the pipelines' own job — see the no_creds exit in
+# dines_automation.py for the first one that was taught to fail properly.
+
+on:
+  schedule:
+    # 10:00 Dubai (UTC+4) = 06:00 UTC — an hour after the last pipeline slot,
+    # so every run of the morning has finished one way or the other.
+    - cron: "0 6 * * *"
+  workflow_dispatch:
+
+permissions:
+  actions: read
+  contents: read
+
+jobs:
+  digest:
+    name: Check every client reported
+    runs-on: ubuntu-22.04
+    timeout-minutes: 10
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Build and send the digest
+        env:
+          GH_TOKEN:           ${{ secrets.GITHUB_TOKEN }}
+          GMAIL_USER:         ${{ secrets.GMAIL_USER }}
+          GMAIL_APP_PASSWORD: ${{ secrets.GMAIL_APP_PASSWORD }}
+          REPORT_RECIPIENT:   ${{ secrets.REPORT_RECIPIENT }}
+        run: |
+          python - <<'EOF'
+          import json, os, smtplib, sys, urllib.request
+          from datetime import datetime, timedelta, timezone
+          from email.mime.text import MIMEText
+
+          REPO  = os.environ["GITHUB_REPOSITORY"]
+          TOKEN = os.environ["GH_TOKEN"]
+
+          # workflow file -> the client a human would name
+          CLIENTS = [
+              ("sapapad_daily.yml",        "BMD (Sapaad)"),
+              ("sapaad_tenants_daily.yml", "Falafel / Heal / Pinza"),
+              ("dines_daily.yml",          "Black Bear Burger (Dines)"),
+              ("streetfood_daily.yml",     "Street Food Ltd"),
+              ("talabat_daily.yml",        "FLARE (Talabat)"),
+              ("symphony_daily.yml",       "Symphony"),
+              ("sftp_daily.yml",           "BrewDog / Smash Tag (SFTP)"),
+          ]
+
+          def api(path):
+              req = urllib.request.Request(
+                  f"https://api.github.com/repos/{REPO}{path}",
+                  headers={"Authorization": f"Bearer {TOKEN}",
+                           "Accept": "application/vnd.github+json"})
+              with urllib.request.urlopen(req, timeout=30) as r:
+                  return json.load(r)
+
+          since = datetime.now(timezone.utc) - timedelta(hours=18)
+          lines, bad = [], []
+
+          for wf, label in CLIENTS:
+              try:
+                  runs = api(f"/actions/workflows/{wf}/runs?per_page=5")["workflow_runs"]
+              except Exception as exc:                     # noqa: BLE001
+                  lines.append(f"  {label:32} ? could not be checked ({exc})")
+                  bad.append(label)
+                  continue
+
+              recent = [r for r in runs
+                        if datetime.strptime(r["created_at"], "%Y-%m-%dT%H:%M:%SZ")
+                        .replace(tzinfo=timezone.utc) >= since]
+
+              if not recent:
+                  lines.append(f"  {label:32} DID NOT RUN")
+                  bad.append(label)
+                  continue
+
+              newest = recent[0]
+              concl  = newest["conclusion"] or newest["status"]
+              when   = newest["created_at"][11:16]
+              if concl == "success":
+                  lines.append(f"  {label:32} sent, {when} UTC")
+              else:
+                  lines.append(f"  {label:32} {concl.upper()} — {newest['html_url']}")
+                  bad.append(label)
+
+          today = datetime.now(timezone.utc).strftime("%d %b %Y")
+          if bad:
+              subject = f"[!] POS reports: {len(bad)} client(s) did not report — {today}"
+              opening = ("These clients have no report for today. Their sales will not\n"
+                         "reach Supy until someone acts:\n\n  "
+                         + "\n  ".join(bad) + "\n\nEverything checked:\n")
+          else:
+              subject = f"POS reports: all clients reported — {today}"
+              opening = "Every client's report went out this morning.\n\nThe full list:\n"
+
+          body = opening + "\n" + "\n".join(lines) + "\n"
+          print(body)
+
+          # A daily all-clear trains people to ignore the mail, which is exactly
+          # how three weeks of BMD silence survived. Only send when it matters.
+          if bad:
+              user = os.environ["GMAIL_USER"]
+              pw   = os.environ["GMAIL_APP_PASSWORD"]
+              to   = os.environ["REPORT_RECIPIENT"]
+              msg = MIMEText(body)
+              msg["Subject"], msg["From"], msg["To"] = subject, user, to
+              with smtplib.SMTP_SSL("smtp.gmail.com", 465) as s:
+                  s.login(user, pw)
+                  s.sendmail(user, to.split(","), msg.as_string())
+              print(f"Alert sent to {to}")
+
+          sys.exit(1 if bad else 0)
+          EOF

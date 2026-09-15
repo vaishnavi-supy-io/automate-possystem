@@ -1013,6 +1013,16 @@ def main() -> int:
         print(f"\n!! failed: {', '.join(failed)} — see logs/dines_{RUN_ID}.jsonl",
               file=sys.stderr)
         return 2
+
+    # A run where NOT ONE branch had credentials delivered nothing, and until
+    # 2026-09-15 it exited 0 — so the scheduled job went green in 39s every
+    # morning while Black Bear received no sales at all. A green run is a
+    # promise that something arrived. Partial credentials stay green on
+    # purpose: a branch joins the run the day its secrets are added.
+    if results and len(waiting) == len(results):
+        print(f"\n!! no branch had credentials — nothing was produced or sent. "
+              f"This run delivered nothing.", file=sys.stderr)
+        return 3
     return 0
 
 
