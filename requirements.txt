@@ -3,3 +3,13 @@ pandas>=2.2.3
 openpyxl>=3.1.5
 python-dotenv>=1.0.1
 pyyaml>=6.0.2
+# SFTP clients (BrewDog, Smash Tag) and monitor.py's server-side check.
+# Was installed on the laptop but never declared, so sftp_daily.yml failed on
+# a fresh runner with ModuleNotFoundError — the pipeline could only ever run
+# from one machine. Found 2026-09-15 by the first cloud run.
+paramiko>=3.4
+
+# NOT installed on runners, deliberately — nothing scheduled imports them:
+#   streamlit   dashboard.py, run locally via run_dashboard.sh
+#   anthropic   sync_sentinel/diagnose.py, the explain-the-incident step
+# Install with: pip install streamlit anthropic
