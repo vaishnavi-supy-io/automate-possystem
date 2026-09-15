@@ -67,6 +67,20 @@ jobs:
               ("sftp_daily.yml",           "BrewDog / Smash Tag (SFTP)"),
           ]
 
+          # Clients known to be blocked on something only a person can supply.
+          # They are still listed every day — they are just not allowed to
+          # trigger the alert, because a mail that fires every morning for a
+          # reason nobody can act on is how people learn to ignore the mail.
+          # Taking a client OUT of this set is part of unblocking them.
+          KNOWN_BLOCKED = {
+              "Black Bear Burger (Dines)": "no branch logins exist yet",
+              "Symphony": "config targets enterprise MH, .env holds IRM",
+          }
+
+          # A pipeline that is still going is not a pipeline that failed. Only
+          # call it a problem once it has had longer than any real run needs.
+          STILL_RUNNING_GRACE_MINUTES = 90
+
           def api(path):
               req = urllib.request.Request(
                   f"https://api.github.com/repos/{REPO}{path}",
@@ -90,19 +104,35 @@ jobs:
                         if datetime.strptime(r["created_at"], "%Y-%m-%dT%H:%M:%SZ")
                         .replace(tzinfo=timezone.utc) >= since]
 
+              def flag(label, text):
+                  """Record a problem — unless this client is known to be
+                  blocked, in which case say so and stay quiet."""
+                  if label in KNOWN_BLOCKED:
+                      lines.append(f"  {label:32} blocked — {KNOWN_BLOCKED[label]}")
+                  else:
+                      lines.append(f"  {label:32} {text}")
+                      bad.append(label)
+
               if not recent:
-                  lines.append(f"  {label:32} DID NOT RUN")
-                  bad.append(label)
+                  flag(label, "DID NOT RUN")
                   continue
 
-              newest = recent[0]
-              concl  = newest["conclusion"] or newest["status"]
-              when   = newest["created_at"][11:16]
+              newest  = recent[0]
+              started = datetime.strptime(newest["created_at"], "%Y-%m-%dT%H:%M:%SZ") \
+                                .replace(tzinfo=timezone.utc)
+              age_min = (datetime.now(timezone.utc) - started).total_seconds() / 60
+              concl   = newest["conclusion"]
+              when    = newest["created_at"][11:16]
+
               if concl == "success":
                   lines.append(f"  {label:32} sent, {when} UTC")
+              elif concl is None and age_min <= STILL_RUNNING_GRACE_MINUTES:
+                  # Started recently and has not finished. Nothing is wrong yet.
+                  lines.append(f"  {label:32} still running, started {when} UTC")
+              elif concl is None:
+                  flag(label, f"STUCK — running {age_min/60:.1f}h — {newest['html_url']}")
               else:
-                  lines.append(f"  {label:32} {concl.upper()} — {newest['html_url']}")
-                  bad.append(label)
+                  flag(label, f"{concl.upper()} — {newest['html_url']}")
 
           today = datetime.now(timezone.utc).strftime("%d %b %Y")
           if bad:
