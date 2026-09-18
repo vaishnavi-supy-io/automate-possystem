@@ -2,8 +2,10 @@ name: Sapapad Daily POS Report
 
 on:
   schedule:
-    # 08:00 Dubai time (UTC+4) = 04:00 UTC — runs every day
-    - cron: "0 4 * * *"
+    # 07:37 Dubai (UTC+4) = 03:37 UTC. Deliberately off the hour: GitHub
+    # queues every :00 cron together and defers the overflow, which is what
+    # pushed these runs to ~09:00 UTC through mid-September.
+    - cron: "37 3 * * *"
   workflow_dispatch:  # allows manual trigger from GitHub Actions UI
 
 jobs:

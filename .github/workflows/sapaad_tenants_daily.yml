@@ -11,8 +11,11 @@ name: Sapaad Tenants Daily POS Report
 
 on:
   schedule:
-    # 08:00 Dubai time (UTC+4) = 04:00 UTC — same slot as BMD.
-    - cron: "0 4 * * *"
+    # 07:43 Dubai (UTC+4) = 03:43 UTC. Off the hour, and staggered 6 min
+    # after BMD so the two Sapaad accounts never queue together.
+    # Sapaad closes the business day at 04:00 local (00:00 UTC), so this
+    # still leaves 3h43m before yesterday is read.
+    - cron: "43 3 * * *"
   workflow_dispatch:
     inputs:
       date:

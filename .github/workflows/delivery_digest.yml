@@ -17,9 +17,9 @@ name: Daily Delivery Digest
 
 on:
   schedule:
-    # 10:00 Dubai (UTC+4) = 06:00 UTC — an hour after the last pipeline slot,
+    # 10:41 Dubai (UTC+4) = 06:41 UTC — over an hour after the SFTP slot,
     # so every run of the morning has finished one way or the other.
-    - cron: "0 6 * * *"
+    - cron: "41 6 * * *"
   workflow_dispatch:
 
 permissions:

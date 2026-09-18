@@ -14,7 +14,7 @@ name: Dines Daily POS Report
 # 4 of the 9 configured branches have logins.
 on:
   schedule:
-    - cron: "0 4 * * *"
+    - cron: "7 4 * * *"
   workflow_dispatch:      # manual trigger from the Actions UI
 
 jobs:

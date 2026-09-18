@@ -2,8 +2,8 @@ name: Talabat Daily POS Report (FLARE)
 
 on:
   schedule:
-    # 08:00 Dubai time (UTC+4) = 04:00 UTC — runs every day
-    - cron: "0 4 * * *"
+    # 07:53 Dubai (UTC+4) = 03:53 UTC — off the hour, staggered
+    - cron: "53 3 * * *"
   workflow_dispatch:  # allows manual trigger from GitHub Actions UI
 
 jobs:

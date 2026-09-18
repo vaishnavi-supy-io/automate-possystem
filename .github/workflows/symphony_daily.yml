@@ -7,10 +7,10 @@ name: Symphony Daily POS Report
 
 on:
   schedule:
-    # 08:00 Dubai time (UTC+4) = 04:00 UTC. Matches the Sapapad job — the
+    # 07:49 Dubai (UTC+4) = 03:49 UTC, off the hour. The
     # report's saved parameter set defaults to "Business Dates: Yesterday",
     # so a morning run always picks up a complete previous trading day.
-    - cron: "0 4 * * *"
+    - cron: "49 3 * * *"
   workflow_dispatch:
 
 jobs:

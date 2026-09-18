@@ -18,9 +18,11 @@ name: SFTP Feeds Daily Ingest
 
 on:
   schedule:
-    # 09:00 Dubai (UTC+4) = 05:00 UTC. An hour after the portal pipelines, so
-    # a client with an overnight export has landed it.
-    - cron: "0 5 * * *"
+    # 09:29 Dubai (UTC+4) = 05:29 UTC, off the hour.
+    # MEASURED, do not move earlier: BrewDog's 21+ store files land on the
+    # server between 03:06 and 04:35 UTC. The old 05:00 slot left only 25
+    # minutes after the last file; 05:29 leaves ~54.
+    - cron: "29 5 * * *"
   workflow_dispatch:
     inputs:
       date:

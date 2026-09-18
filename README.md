@@ -81,7 +81,7 @@ PORTAL_COMPANY=your_company
 PORTAL_PASSWORD=your_password
 
 # Sapapad portal
-SAPAPAD_USERNAME=supy@bakemyday.me
+SAPAPAD_USERNAME=you@supy.io
 SAPAPAD_PASSWORD=your_password
 
 # Gmail — must be an App Password, not your account password
