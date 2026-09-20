@@ -1,11 +1,14 @@
 name: Sapapad Daily POS Report
 
 on:
-  schedule:
-    # 07:37 Dubai (UTC+4) = 03:37 UTC. Deliberately off the hour: GitHub
-    # queues every :00 cron together and defers the overflow, which is what
-    # pushed these runs to ~09:00 UTC through mid-September.
-    - cron: "37 3 * * *"
+  # NO `schedule:` HERE — ON PURPOSE.
+  # GitHub's cron fired this 4-5 HOURS late every day (measured 2026-09-20:
+  # scheduled 03:37-06:41 UTC, all eight started 08:16-09:39). Moving the
+  # crons off the hour changed nothing. The same workflows dispatched via
+  # the REST API start within seconds, so the clock now lives in the
+  # Cloudflare Worker at scheduler/ and GitHub only receives dispatches.
+  # Re-adding a `schedule:` here brings back the delay AND double-sends
+  # every report, because the Worker will dispatch it too.
   workflow_dispatch:  # allows manual trigger from GitHub Actions UI
 
 jobs:

@@ -6,11 +6,14 @@ name: Symphony Daily POS Report
 # mapping and the locations finding.
 
 on:
-  schedule:
-    # 07:49 Dubai (UTC+4) = 03:49 UTC, off the hour. The
-    # report's saved parameter set defaults to "Business Dates: Yesterday",
-    # so a morning run always picks up a complete previous trading day.
-    - cron: "49 3 * * *"
+  # NO `schedule:` HERE — ON PURPOSE.
+  # GitHub's cron fired this 4-5 HOURS late every day (measured 2026-09-20:
+  # scheduled 03:37-06:41 UTC, all eight started 08:16-09:39). Moving the
+  # crons off the hour changed nothing. The same workflows dispatched via
+  # the REST API start within seconds, so the clock now lives in the
+  # Cloudflare Worker at scheduler/ and GitHub only receives dispatches.
+  # Re-adding a `schedule:` here brings back the delay AND double-sends
+  # every report, because the Worker will dispatch it too.
   workflow_dispatch:
 
 jobs:
