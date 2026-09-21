@@ -131,6 +131,7 @@ jobs:
           if-no-files-found: ignore
           path: |
             logs/*.jsonl
+            logs/streetfood_run_summary.json
             screenshots/*.png
             downloads/*_raw.csv
 
@@ -144,23 +145,61 @@ jobs:
           import os, smtplib
           from email.mime.text import MIMEText
 
+          import json, pathlib
+
           gmail_user = os.environ["GMAIL_USER"]
           gmail_password = os.environ["GMAIL_APP_PASSWORD"]
-          recipients = ["vaishnavi@supy.io", "charlotte@supy.io"]
           run_id = os.environ.get("GITHUB_RUN_ID", "unknown")
           repo = os.environ.get("GITHUB_REPOSITORY", "")
 
-          subject = "⚠️ Street Food Ltd POS report FAILED — upload by hand"
-          body = (
-              "The daily Street Food Ltd pipelines failed after 2 attempts.\n\n"
-              "Yesterday's delivery sales have NOT reached Supy. Check which\n"
-              "partners produced nothing and upload those by hand.\n\n"
-              "Run log, screenshots and raw CSVs are attached to the run as the\n"
-              '"streetfood-failure-diagnostics" artifact:\n'
-              f"  https://github.com/{repo}/actions/runs/{run_id}\n\n"
-              "Note: just_eat and justeat_business are NOT part of this job —\n"
-              "they need a real Chrome and only run from the laptop.\n"
-          )
+          # Not every failure is someone's problem to fix. Deliveroo refusing
+          # to offer the date ("Not available." on the calendar cell) leaves
+          # nothing to upload by hand, and on every occurrence so far the day
+          # had no sales at all. Paging a client-facing CSM for that is a false
+          # alarm, and a daily false alarm is how real ones start being ignored.
+          # run_all_partners.py classifies each failure; anything it cannot
+          # explain counts as actionable and still shouts.
+          summary = {}
+          try:
+              summary = json.loads(
+                  pathlib.Path("logs/streetfood_run_summary.json").read_text())
+          except Exception as exc:
+              print(f"No run summary ({exc}) — treating as actionable.")
+
+          quiet = summary.get("all_failures_unactionable", False)
+          detail = "\n".join(
+              f"    {p['name']:<20} {p['reason']}"
+              for p in summary.get("partners", []) if not p.get("ok")
+          ) or "    (no per-partner detail — see the run log)"
+
+          if quiet:
+              recipients = ["vaishnavi@supy.io"]
+              subject = "Street Food Ltd — Deliveroo date not offered by the portal (no action)"
+              body = (
+                  "The Street Food Ltd run did not complete, but nothing needs\n"
+                  "uploading by hand.\n\n"
+                  "Every partner that failed did so for a reason outside our\n"
+                  "control — Deliveroo declining to offer the date in its report\n"
+                  "wizard. There is no file being withheld from Supy; on each\n"
+                  "occurrence so far the day had no sales at all.\n\n"
+                  f"{detail}\n\n"
+                  "Worth chasing only if it repeats on a day the site traded.\n\n"
+                  f"  https://github.com/{repo}/actions/runs/{run_id}\n"
+              )
+          else:
+              recipients = ["vaishnavi@supy.io", "charlotte@supy.io"]
+              subject = "⚠️ Street Food Ltd POS report FAILED — upload by hand"
+              body = (
+                  "The daily Street Food Ltd pipelines failed after 2 attempts.\n\n"
+                  "Yesterday's delivery sales have NOT reached Supy. Check which\n"
+                  "partners produced nothing and upload those by hand.\n\n"
+                  f"{detail}\n\n"
+                  "Run log, screenshots and raw CSVs are attached to the run as the\n"
+                  '"streetfood-failure-diagnostics" artifact:\n'
+                  f"  https://github.com/{repo}/actions/runs/{run_id}\n\n"
+                  "Note: just_eat and justeat_business are NOT part of this job —\n"
+                  "they need a real Chrome and only run from the laptop.\n"
+              )
 
           msg = MIMEText(body)
           msg["Subject"] = subject

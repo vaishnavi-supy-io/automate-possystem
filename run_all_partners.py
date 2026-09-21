@@ -32,6 +32,7 @@ Exit codes:
 """
 
 import argparse
+import json
 import os
 import pathlib
 import re
@@ -182,6 +183,67 @@ def send_summary(results: list, attachments: list, date_range: str,
     print(f"\n  Summary email sent -> {', '.join(recipients)}")
 
 
+# A partner can fail for reasons nobody can act on. The clearest is Deliveroo
+# refusing to offer the date at all ("Not available." on the calendar cell) —
+# there is no file to upload by hand, and on the days seen so far there were no
+# sales either. Telling a client-facing CSM to upload it is a false alarm, so
+# the run records WHY each partner failed and lets the caller decide how loudly
+# to shout. Matched on the engine's own error text in its jsonl.
+UNACTIONABLE_MARKERS = {
+    "date_withheld_by_portal": "as a selectable day",
+}
+
+
+def classify_failure(name: str, started: datetime) -> str:
+    """Why did this partner fail? Read back the engine's own structured log.
+
+    Returns an UNACTIONABLE_MARKERS key, or "actionable" when the reason is
+    anything else — including when no log can be read, because an unreadable
+    failure is exactly the kind that still deserves a shout.
+    """
+    logs = sorted(
+        (p for p in (BASE_DIR / "logs").glob(f"{name}_*.jsonl")
+         if datetime.fromtimestamp(p.stat().st_mtime) >= started),
+        key=lambda p: p.stat().st_mtime,
+    )
+    if not logs:
+        return "actionable"
+    text = logs[-1].read_text(errors="replace")
+    for reason, marker in UNACTIONABLE_MARKERS.items():
+        if marker in text:
+            return reason
+    return "actionable"
+
+
+def write_run_summary(results: list, started: datetime) -> None:
+    """Record the run machine-readably so CI can pick its alert wording.
+
+    The console summary above is for a human reading the log; this is for the
+    workflow step that decides whether to page anyone.
+    """
+    summary = {
+        "started": started.isoformat(),
+        "partners": [
+            {
+                "name": name,
+                "exit_code": code,
+                "ok": code == 0,
+                "reason": "ok" if code == 0 else classify_failure(name, started),
+            }
+            for name, code, _ in results
+        ],
+    }
+    summary["all_failures_unactionable"] = bool(
+        [p for p in summary["partners"] if not p["ok"]]
+    ) and all(
+        p["reason"] in UNACTIONABLE_MARKERS
+        for p in summary["partners"] if not p["ok"]
+    )
+    path = BASE_DIR / "logs" / "streetfood_run_summary.json"
+    path.write_text(json.dumps(summary, indent=2))
+    print(f"  Run summary: {path}")
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(
         description="Run every delivery partner pipeline")
@@ -279,6 +341,8 @@ def main() -> int:
         print("\n  All partners complete. Nothing to do by hand.")
 
     print(f"\n  Output files: {BASE_DIR / 'output'}\n")
+
+    write_run_summary(results, started)
 
     if not (args.no_summary_email or args.no_email or args.dry_run):
         recipients = args.email_to or resolve_recipients()
