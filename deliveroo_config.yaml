@@ -83,6 +83,21 @@ selectors:
     - "**medallia**"
     - "**digital-cloud.medallia.eu**"
 
+  # Blocking the REQUEST stopped being enough on 2026-09-19: the survey began
+  # rendering on GitHub runners anyway (so it is served from a host the globs
+  # above do not match), and Partner Hub added a second widget — a survey CARD
+  # that is NOT a .ReactModalPortal, so promo_text_markers below cannot reach
+  # it. Both are therefore also deleted from the DOM by selector before every
+  # wizard step. Every entry here must be a third-party widget: anything the
+  # wizard itself owns would be removed too.
+  #   Seen intercepting the date step, 2026-09-19 → 21:
+  #     <iframe title="Feedback Survey" id="embeddedIframe17225">
+  #     <div class="tcl__Card-76274da4 styles_surveyCard__So3…">
+  overlay_remove_selectors:
+    - "iframe[title='Feedback Survey']"
+    - "iframe[id^='embeddedIframe']"
+    - "[class*='surveyCard']"
+
   # Promo modals are removed from the DOM if they are still intercepting after
   # a dismiss click. Matched on their COPY so the wizard's own dialogs — which
   # are also ReactModalPortal/tcl__Modal nodes — are never removed.

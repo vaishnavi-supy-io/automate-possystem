@@ -309,6 +309,43 @@ def _clear_overlays(page: Page) -> None:
             continue
 
     _remove_promo_modals(page)
+    _remove_overlay_nodes(page)
+
+
+def _remove_overlay_nodes(page: Page) -> int:
+    """Delete third-party widgets that intercept clicks, matched by selector.
+
+    _remove_promo_modals only reaches .ReactModalPortal nodes matched on their
+    copy. Two widgets escape it and stalled every CI run from 2026-09-19:
+    the Medallia "Feedback Survey" iframe (cross-origin, so its text is
+    invisible to the parent page — and blocked_url_patterns no longer stops it
+    loading) and a survey CARD that is a plain tcl__Card, not a portal.
+
+    Selector-driven rather than text-driven for exactly that reason. Runs on
+    every frame: the card mounts inside the wizard's own iframe on some routes.
+    """
+    selectors = CONFIG["selectors"].get("overlay_remove_selectors") or []
+    if not selectors:
+        return 0
+    removed = 0
+    for frame in page.frames:
+        try:
+            removed += int(frame.evaluate(
+                """(selectors) => {
+                    let n = 0;
+                    selectors.forEach((sel) => {
+                        document.querySelectorAll(sel).forEach((el) => {
+                            el.remove(); n++;
+                        });
+                    });
+                    return n;
+                }""", selectors))
+        except Exception:
+            # A frame can detach mid-sweep; the remaining frames still matter.
+            continue
+    if removed and _verbose:
+        print(f"  [x] Removed {removed} overlay node(s) by selector")
+    return removed
 
 
 def _remove_promo_modals(page: Page) -> int:
