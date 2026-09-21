@@ -17,12 +17,14 @@ name: SFTP Feeds Daily Ingest
 #     monitor_daily.yml, which checks that data actually ARRIVED.
 
 on:
-  schedule:
-    # 09:29 Dubai (UTC+4) = 05:29 UTC, off the hour.
-    # MEASURED, do not move earlier: BrewDog's 21+ store files land on the
-    # server between 03:06 and 04:35 UTC. The old 05:00 slot left only 25
-    # minutes after the last file; 05:29 leaves ~54.
-    - cron: "29 5 * * *"
+  # NO `schedule:` HERE — ON PURPOSE.
+  # GitHub's cron fired this 4-5 HOURS late every day (measured 2026-09-20:
+  # scheduled 03:37-06:41 UTC, all eight started 08:16-09:39). Moving the
+  # crons off the hour changed nothing. The same workflows dispatched via
+  # the REST API start within seconds, so the clock now lives in the
+  # Cloudflare Worker at scheduler/ and GitHub only receives dispatches.
+  # Re-adding a `schedule:` here brings back the delay AND double-sends
+  # every report, because the Worker will dispatch it too.
   workflow_dispatch:
     inputs:
       date:

@@ -10,12 +10,14 @@ name: Sapaad Tenants Daily POS Report
 # reason.
 
 on:
-  schedule:
-    # 07:43 Dubai (UTC+4) = 03:43 UTC. Off the hour, and staggered 6 min
-    # after BMD so the two Sapaad accounts never queue together.
-    # Sapaad closes the business day at 04:00 local (00:00 UTC), so this
-    # still leaves 3h43m before yesterday is read.
-    - cron: "43 3 * * *"
+  # NO `schedule:` HERE — ON PURPOSE.
+  # GitHub's cron fired this 4-5 HOURS late every day (measured 2026-09-20:
+  # scheduled 03:37-06:41 UTC, all eight started 08:16-09:39). Moving the
+  # crons off the hour changed nothing. The same workflows dispatched via
+  # the REST API start within seconds, so the clock now lives in the
+  # Cloudflare Worker at scheduler/ and GitHub only receives dispatches.
+  # Re-adding a `schedule:` here brings back the delay AND double-sends
+  # every report, because the Worker will dispatch it too.
   workflow_dispatch:
     inputs:
       date:
@@ -96,6 +98,14 @@ jobs:
           GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+          # sapapad_automation.py resolves recipients as
+          # SAPAPAD_REPORT_RECIPIENT -> REPORT_RECIPIENT -> GMAIL_USER. Until
+          # 2026-09-21 only the second was passed here, so every cloud run
+          # emailed vaishnavi@ ALONE. That is why these three tenants never
+          # reached the customer care inbox while BMD did — BMD had a
+          # duplicate run on the laptop, whose .env carries the first name.
+          # Dropping this line silently un-sends every tenant report again.
+          SAPAPAD_REPORT_RECIPIENT:        ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: |
           python sapapad_automation.py --config ${{ matrix.config }} --per-branch \
             ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
@@ -118,6 +128,7 @@ jobs:
           GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+          SAPAPAD_REPORT_RECIPIENT:        ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: |
           python sapapad_automation.py --config ${{ matrix.config }} --per-branch --force-login \
             ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}

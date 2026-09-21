@@ -24,8 +24,14 @@ name: Street Food Ltd Daily POS Report
 # wholesale prices in mappings/menu_prices.csv — once those land it starts
 # producing without touching this file.
 on:
-  schedule:
-    - cron: "13 4 * * *"
+  # NO `schedule:` HERE — ON PURPOSE.
+  # GitHub's cron fired this 4-5 HOURS late every day (measured 2026-09-20:
+  # scheduled 03:37-06:41 UTC, all eight started 08:16-09:39). Moving the
+  # crons off the hour changed nothing. The same workflows dispatched via
+  # the REST API start within seconds, so the clock now lives in the
+  # Cloudflare Worker at scheduler/ and GitHub only receives dispatches.
+  # Re-adding a `schedule:` here brings back the delay AND double-sends
+  # every report, because the Worker will dispatch it too.
   workflow_dispatch:
     inputs:
       date:

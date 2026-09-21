@@ -1,0 +1,12 @@
+name = "pos-scheduler"
+main = "src/index.js"
+compatibility_date = "2026-09-20"
+
+# Every 5 minutes; src/index.js decides what is actually due. Job times in
+# SCHEDULE must be multiples of 5 or they will never match a tick.
+[triggers]
+crons = ["*/5 * * * *"]
+
+# Secrets (set with `wrangler secret put`, never in this file):
+#   GH_TOKEN           GitHub token with `workflow` scope on this repo
+#   SLACK_WEBHOOK_URL  optional; alerts when a dispatch fails twice
