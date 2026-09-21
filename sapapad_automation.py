@@ -1442,16 +1442,27 @@ def stage_email(
 
     gmail_user     = os.environ.get("GMAIL_USER", "")
     gmail_password = os.environ.get("GMAIL_APP_PASSWORD", "")
-    recipients     = [
-        r.strip() for r in
-        os.environ.get("SAPAPAD_REPORT_RECIPIENT",
-                       os.environ.get("REPORT_RECIPIENT", gmail_user)).split(",")
-        if r.strip()
-    ]
+    # Fall through on EMPTY as well as unset. A GitHub secret that exists but
+    # holds nothing still sets the variable, so os.environ.get(name, fallback)
+    # hands back "" and never reaches the fallback — which would leave
+    # recipients empty and send the report to nobody while logging "ok".
+    recipients = []
+    for var in ("SAPAPAD_REPORT_RECIPIENT", "REPORT_RECIPIENT"):
+        recipients = [r.strip() for r in os.environ.get(var, "").split(",") if r.strip()]
+        if recipients:
+            break
+    else:
+        recipients = [gmail_user] if gmail_user else []
 
     if not gmail_user or not gmail_password:
         raise EmailError(
             "GMAIL_USER and GMAIL_APP_PASSWORD must be set in your .env / GitHub Secrets."
+        )
+
+    if not recipients:
+        raise EmailError(
+            "No recipients: set SAPAPAD_REPORT_RECIPIENT or REPORT_RECIPIENT "
+            "in your .env / GitHub Secrets."
         )
 
     branch_label = f" — {branch_name}" if branch_name else ""

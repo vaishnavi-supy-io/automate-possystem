@@ -98,6 +98,14 @@ jobs:
           GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+          # sapapad_automation.py resolves recipients as
+          # SAPAPAD_REPORT_RECIPIENT -> REPORT_RECIPIENT -> GMAIL_USER. Until
+          # 2026-09-21 only the second was passed here, so every cloud run
+          # emailed vaishnavi@ ALONE. That is why these three tenants never
+          # reached the customer care inbox while BMD did — BMD had a
+          # duplicate run on the laptop, whose .env carries the first name.
+          # Dropping this line silently un-sends every tenant report again.
+          SAPAPAD_REPORT_RECIPIENT:        ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: |
           python sapapad_automation.py --config ${{ matrix.config }} --per-branch \
             ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}
@@ -120,6 +128,7 @@ jobs:
           GMAIL_USER:                      ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:              ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:                ${{ secrets.REPORT_RECIPIENT }}
+          SAPAPAD_REPORT_RECIPIENT:        ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: |
           python sapapad_automation.py --config ${{ matrix.config }} --per-branch --force-login \
             ${{ github.event.inputs.date && format('--date {0}', github.event.inputs.date) || '' }}

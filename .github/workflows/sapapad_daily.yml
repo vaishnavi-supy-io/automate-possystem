@@ -44,6 +44,16 @@ jobs:
           GMAIL_USER:          ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:    ${{ secrets.REPORT_RECIPIENT }}
+          # sapapad_automation.py resolves recipients as
+          # SAPAPAD_REPORT_RECIPIENT -> REPORT_RECIPIENT -> GMAIL_USER. Until
+          # 2026-09-21 only the second was passed here, so this run emailed
+          # vaishnavi@ alone and BMD reached the customer care inbox only via
+          # a duplicate run on the laptop, whose .env carries the first name.
+          # ORDER MATTERS: that laptop run (launchd io.supy.sapapad.daily) is
+          # still the only thing putting BMD in front of customer care until
+          # the SAPAPAD_REPORT_RECIPIENT repo secret is confirmed to hold
+          # customer.care@supy.io. Retire it only after that, not before.
+          SAPAPAD_REPORT_RECIPIENT: ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: python sapapad_automation.py --per-branch
 
       - name: Retry — wait 2 minutes then try again
@@ -61,6 +71,7 @@ jobs:
           GMAIL_USER:          ${{ secrets.GMAIL_USER }}
           GMAIL_APP_PASSWORD:  ${{ secrets.GMAIL_APP_PASSWORD }}
           REPORT_RECIPIENT:    ${{ secrets.REPORT_RECIPIENT }}
+          SAPAPAD_REPORT_RECIPIENT: ${{ secrets.SAPAPAD_REPORT_RECIPIENT }}
         run: python sapapad_automation.py --per-branch --force-login
 
       - name: Send failure alert email
