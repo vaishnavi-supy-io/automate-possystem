@@ -816,6 +816,21 @@ def _pick_date(page: Page, field_selector: str, when: datetime) -> None:
     for _ in range(limit):
         found = page.query_selector(cell_selector)
         if found:
+            # The suffix match above is deliberately state-blind, so it also
+            # matches "Not available. Sunday, September 20, 2026". Clicking a
+            # disabled cell does not fail fast — Playwright waits out the full
+            # 30s actionability timeout on "element is not enabled", three
+            # times over via @retry, and reports a bare timeout that looks
+            # identical to a selector break. Ask first and say what is true.
+            if not found.is_enabled():
+                state = (found.get_attribute("aria-label") or "").strip()
+                screenshot(page, "nav", "03b_date_unavailable")
+                raise NavError(
+                    f"Deliveroo is not offering {when:%Y-%m-%d} as a selectable "
+                    f"day: the calendar cell reads {state!r}. The report cannot "
+                    f"be built for that date yet — this is the portal withholding "
+                    f"the day, not a selector or overlay problem."
+                )
             found.click()
             page.wait_for_timeout(600)
             return
